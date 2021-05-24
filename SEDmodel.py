@@ -367,6 +367,12 @@ def SED(nu,m,mdot,verbose_return=False,s=0.5,alpha=0.2,beta=10.0,f=1.0,delta=0.3
     """
 
     ##############################################
+    # warn about maximum mdot
+
+    if (np.log10(mdot) >= -1.7):
+        print('WARNING: the input accretion rate is larger than the maximum log(mdot) = -1.7, which will yield unphysical results')
+    
+    ##############################################
     # derived quantities
 
     gamma = (8.0 + (5.0*beta)) / (6.0 + (3.0*beta))
