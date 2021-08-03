@@ -1,5 +1,7 @@
 import numpy as np
+from scipy import interpolate
 from scipy.special import kn
+np.seterr(divide='ignore')
 
 ##############################################
 # electron-ion heating functions
@@ -346,7 +348,7 @@ def compute_brems_spectrum(nu_arr,r,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
 ##############################################
 # SED main function
 
-def SED(nu,m,mdot,verbose_return=False,s=0.5,alpha=0.2,beta=10.0,f=1.0,delta=0.3,rmin=3.0,rmax=1000.0,N_Te=200,N_r=30,N_nu=20000,rthresh=50.0):
+def SED(nu,m,mdot,verbose_return=False,s=0.5,alpha=0.2,beta=10.0,f=1.0,delta=0.3,rmin=3.0,rmax=1000.0,numin=1.0e2,numax=1.0e22,N_Te=200,N_r=30,N_nu=20000,rthresh=50.0):
     """
     Inputs:
     nu: array of frequencies at which to compute the SED
@@ -367,11 +369,15 @@ def SED(nu,m,mdot,verbose_return=False,s=0.5,alpha=0.2,beta=10.0,f=1.0,delta=0.3
     """
 
     ##############################################
-    # warn about maximum mdot
+    # warnings
 
     if (np.log10(mdot) >= -1.7):
         print('WARNING: the input accretion rate is larger than the maximum log(mdot) = -1.7, which will yield unphysical results')
-    
+    if ((nu < numin).sum() > 0):
+        print('WARNING: the minimum input frequency is smaller than the minimum internally-computed frequency of '+str(numin)+' Hz')
+    if ((nu > numax).sum() > 0):
+        print('WARNING: the maximum input frequency is larger than the maximum internally-computed frequency of '+str(numax)+' Hz')
+
     ##############################################
     # derived quantities
 
@@ -385,7 +391,7 @@ def SED(nu,m,mdot,verbose_return=False,s=0.5,alpha=0.2,beta=10.0,f=1.0,delta=0.3
     # required arrays
 
     r = 10.0**np.linspace(np.log10(rmin),np.log10(rmax),N_r)
-    nu_arr = 10.0**np.linspace(2.0,22.0,N_nu)
+    nu_arr = 10.0**np.linspace(np.log10(numin),np.log10(numax),N_nu)
 
     ##############################################
     # determining the electron temperature
@@ -486,14 +492,20 @@ def SED(nu,m,mdot,verbose_return=False,s=0.5,alpha=0.2,beta=10.0,f=1.0,delta=0.3
     nu_min, Lnu_min = compute_min_freq(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
 
     # synchrotron emission
-    Lnu_synch = compute_synch_spectrum(nu,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3,nu_p,L_p,nu_min,Lnu_min)
+    Lnu_synch_full = compute_synch_spectrum(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3,nu_p,L_p,nu_min,Lnu_min)
+    synch_interpolator = interpolate.interp1d(np.log10(nu_arr), np.log10(Lnu_synch_full),kind='linear',fill_value=0.0)
+    Lnu_synch = 10.0**synch_interpolator(np.log10(nu))
 
     # inverse Compton emission
-    Lnu_compt = compute_compt_spectrum(nu,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3,nu_p,L_p)
+    Lnu_compt_full = compute_compt_spectrum(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3,nu_p,L_p)
+    compt_interpolator = interpolate.interp1d(np.log10(nu_arr), np.log10(Lnu_compt_full),kind='linear',fill_value=0.0)
+    Lnu_compt = 10.0**compt_interpolator(np.log10(nu))
 
     # bremsstrahlung emission
-    Lnu_brems = compute_brems_spectrum(nu,r,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
-
+    Lnu_brems_full = compute_brems_spectrum(nu_arr,r,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
+    brems_interpolator = interpolate.interp1d(np.log10(nu_arr), np.log10(Lnu_brems_full),kind='linear',fill_value=0.0)
+    Lnu_brems = 10.0**brems_interpolator(np.log10(nu))
+    
     # combine
     Lnu = Lnu_synch + Lnu_compt + Lnu_brems
 
