@@ -56,6 +56,56 @@ def relMax(xM):
 ##############################################
 # synchrotron functions
 
+def find_critical_freq(nu_arr,volume,surface,n_bisect=10):
+
+    diff = volume - surface
+    
+    # first check if the intersection is contained in the sampled points
+    zero_idx = np.where(diff == 0)[0]
+    if (zero_idx.size > 0):
+        i = zero_idx[0]
+        nu_crit = nu_arr[i]
+        Lnu_crit = volume[i]
+        return nu_crit, Lnu_crit
+
+    # otherwise look for a sign change, which should bracket an intersection
+    sign_change_idx = np.where(diff[:-1] * diff[1:] < 0)[0]
+
+    # if the sign never changes, then fall back to the point of minimum absolute difference
+    if (sign_change_idx.size == 0):
+        i = np.argmin(np.abs(diff))
+        nu_crit = nu_arr[i]
+        Lnu_crit = 0.5 * (volume[i] + surface[i])
+        return nu_crit, Lnu_crit
+
+    # otherwise carry out a bisection search within the identified interval
+    i = sign_change_idx[0]
+    x_lo = nu_arr[i]
+    x_hi = nu_arr[i + 1]
+    y_lo = np.interp(x_lo,nu_arr,diff)
+    y_hi = np.interp(x_hi,nu_arr,diff)
+    for _ in range(n_bisect):
+        x_mid = 0.5 * (x_lo + x_hi)
+        y_mid = np.interp(x_mid,nu_arr,diff)
+
+        if (y_mid == 0.0):
+            x_lo = x_hi = x_mid
+            break
+
+        if ((y_lo*y_mid) <= 0):
+            x_hi = x_mid
+            y_hi = y_mid
+        else:
+            x_lo = x_mid
+            y_lo = y_mid
+
+    nu_crit = 0.5*(x_lo + x_hi)
+    vol_crit = np.interp(nu_crit, nu_arr, volume)
+    surf_crit = np.interp(nu_crit, nu_arr, surface)
+    Lnu_crit = 0.5*(vol_crit + surf_crit)
+
+    return nu_crit, Lnu_crit
+
 def compute_peak_freq(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
 
     # Te
@@ -78,8 +128,7 @@ def compute_peak_freq(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
     surface = (1.058e-24)*(nu_arr**2.0)*Te0*(m**2.0)*(rmin**(1.0+t))
 
     # critical frequency
-    nu_p = nu_arr[np.argmin(np.abs(volume - surface))]
-    L_p = 0.5*(surface[np.argmin(np.abs(volume - surface))] + volume[np.argmin(np.abs(volume - surface))])
+    nu_p, L_p = find_critical_freq(nu_arr,volume,surface)
 
     return nu_p, L_p
 
@@ -105,8 +154,7 @@ def compute_min_freq(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
     surface = (1.058e-24)*(nu_arr**2.0)*Te0*(m**2.0)*(rmax**(1.0+t))
 
     # critical frequency
-    nu_min = nu_arr[np.argmin(np.abs(volume - surface))]
-    Lnu_min = 0.5*(surface[np.argmin(np.abs(volume - surface))] + volume[np.argmin(np.abs(volume - surface))])
+    nu_min, Lnu_min = find_critical_freq(nu_arr,volume,surface)
 
     return nu_min, Lnu_min
 
@@ -132,8 +180,7 @@ def compute_synch_power(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
     surface = (1.058e-24)*(nu_arr**2.0)*Te0*(m**2.0)*(rmin**(1.0+t))
 
     # critical frequency
-    nu_p = nu_arr[np.argmin(np.abs(volume - surface))]
-    Lnu_p = 0.5*(surface[np.argmin(np.abs(volume - surface))] + volume[np.argmin(np.abs(volume - surface))])
+    nu_p, Lnu_p = find_critical_freq(nu_arr,volume,surface)
 
     # save the spectrum at rmin
     Lnu_rmin = np.zeros_like(nu_arr)
@@ -160,10 +207,9 @@ def compute_synch_power(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
     # find critical frequency at this radius
     volume = (1.896e8)*(relMax(xM)/kn(2,1.0/theta_e))*(alpha**(-1.0))*(c1**(-1.0))*(m**2.0)*mdot*nu_arr*(rmax**((3.0/2.0) + s))
     surface = (1.058e-24)*(nu_arr**2.0)*Te0*(m**2.0)*(rmax**(1.0+t))
-
+    
     # critical frequency
-    nu_min = nu_arr[np.argmin(np.abs(volume - surface))]
-    Lnu_min = 0.5*(surface[np.argmin(np.abs(volume - surface))] + volume[np.argmin(np.abs(volume - surface))])
+    nu_min, Lnu_min = find_critical_freq(nu_arr,volume,surface)
 
     # construct synchrotron spetrum
     Lnu_synch = np.zeros_like(nu_arr)
