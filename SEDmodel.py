@@ -69,23 +69,23 @@ def find_critical_freq(nu_arr,volume,surface,n_bisect=10):
         return nu_crit, Lnu_crit
 
     # otherwise look for a sign change, which should bracket an intersection
-    sign_change_idx = np.where(diff[:-1] * diff[1:] < 0)[0]
+    sign_change_idx = np.where(diff[:-1]*diff[1:] < 0)[0]
 
     # if the sign never changes, then fall back to the point of minimum absolute difference
     if (sign_change_idx.size == 0):
         i = np.argmin(np.abs(diff))
         nu_crit = nu_arr[i]
-        Lnu_crit = 0.5 * (volume[i] + surface[i])
+        Lnu_crit = 0.5*(volume[i] + surface[i])
         return nu_crit, Lnu_crit
 
     # otherwise carry out a bisection search within the identified interval
     i = sign_change_idx[0]
     x_lo = nu_arr[i]
-    x_hi = nu_arr[i + 1]
-    y_lo = np.interp(x_lo,nu_arr,diff)
-    y_hi = np.interp(x_hi,nu_arr,diff)
+    x_hi = nu_arr[i+1]
+    y_lo = diff[i]
+    y_hi = diff[i+1]
     for _ in range(n_bisect):
-        x_mid = 0.5 * (x_lo + x_hi)
+        x_mid = 0.5*(x_lo + x_hi)
         y_mid = np.interp(x_mid,nu_arr,diff)
 
         if (y_mid == 0.0):
