@@ -394,7 +394,9 @@ def compute_brems_spectrum(nu_arr,r,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
 ##############################################
 # SED main function
 
-def SED(nu,m,mdot,verbose_return=False,s=0.5,alpha=0.2,beta=10.0,f=1.0,delta=0.3,rmin=3.0,rmax=1000.0,numin=1.0e2,numax=1.0e22,N_Te=200,N_r=30,N_nu=20000,rthresh=50.0):
+def SED(nu,m,mdot,verbose_return=False,s=0.5,alpha=0.2,beta=10.0,f=1.0,delta=0.3,rmin=3.0,
+    rmax=1000.0,numin=1.0e2,numax=1.0e22,N_Te=100,N_r=30,N_nu=20000,rthresh=50.0,
+    logTe0_lo=8.0,logTe0_hi=12.0,tol_logTe0=1.0e-6):
     """
     Inputs:
     nu: array of frequencies at which to compute the SED
@@ -440,20 +442,9 @@ def SED(nu,m,mdot,verbose_return=False,s=0.5,alpha=0.2,beta=10.0,f=1.0,delta=0.3
     nu_arr = 10.0**np.linspace(np.log10(numin),np.log10(numax),N_nu)
 
     ##############################################
-    # determining the electron temperature
+    # determine the electron temperature
 
-    Te0_testarr = 10.0**np.linspace(8.0,12.0,N_Te)
-
-    heating = np.zeros_like(Te0_testarr)
-    cooling = np.zeros_like(Te0_testarr)
-
-    Qplus_arr = np.zeros_like(Te0_testarr)
-    Qie_arr = np.zeros_like(Te0_testarr)
-    Qadve_arr = np.zeros_like(Te0_testarr)
-    Ps_arr = np.zeros_like(Te0_testarr)
-    Pc_arr = np.zeros_like(Te0_testarr)
-    Pb_arr = np.zeros_like(Te0_testarr)
-    for iT, Te0 in enumerate(Te0_testarr):
+    def electron_energy_balance(Te0):
 
         # solve for Te power-law index
         t = (1.0 / np.log(rmax))*np.log((6.66e12)*beta*c3/(2.08*Te0*(1.0+beta)))
@@ -478,16 +469,12 @@ def SED(nu,m,mdot,verbose_return=False,s=0.5,alpha=0.2,beta=10.0,f=1.0,delta=0.3
         else:
             Qplus = (9.430e38)*(f**(-1.0))*((1.0+beta)**(-1.0))*(c3**(1.0/2.0))*m*mdot*((1.0-s)**(-1.0))*((rmin**(-1.0+s)) - (rmax**(-1.0+s)))
 
-        Qplus_arr[iT] = Qplus
-
         # electron-ion heating rate
         qie = qie_wrapper(Te,Ti,ne,r,rthresh=rthresh)
 
         # integrate over volume
         integrand = (3.236e17)*(m**3.0)*qie*(r**2.0)
         Qie = np.sum(0.5*(integrand[1:] + integrand[0:-1])*(r[1:] - r[0:-1]))
-
-        Qie_arr[iT] = Qie
 
         ##############################################
         # cooling ####################################
@@ -496,35 +483,92 @@ def SED(nu,m,mdot,verbose_return=False,s=0.5,alpha=0.2,beta=10.0,f=1.0,delta=0.3
         # electron advection
         integrand = (1.013e26)*m*mdot*Te0*(((1.0 - t)/(gammaCV(theta_e) - 1.0)) - (3.0/2.0) + s)*(r**(s+t-2.0))
         Qadve = np.sum(0.5*(integrand[1:] + integrand[0:-1])*(r[1:] - r[0:-1]))
-        Qadve_arr[iT] = Qadve
+
+        # eliminate negative advected electron energy
+        if Qadve <= 0.0:
+            Qadve = 0.0
 
         # synchrotron emission
         P_synch = compute_synch_power(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
-        Ps_arr[iT] = P_synch
 
         # inverse Compton emission
         P_compt = compute_compt_power(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
-        Pc_arr[iT] = P_compt
 
         # bremsstrahlung emission
         P_brems = compute_brems_power(r,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
-        Pb_arr[iT] = P_brems
-    
-    # eliminate negative advected electron energy
-    Qadve_arr[Qadve_arr <= 0.0] = 0.0
 
-    # total electron heating and cooling
-    heating = Qie_arr + (delta*Qplus_arr)
-    cooling = Qadve_arr + Ps_arr + Pc_arr + Pb_arr
+        # total electron heating and cooling
+        heating = Qie + (delta*Qplus)
+        cooling = Qadve + P_synch + P_compt + P_brems
 
-    # find the temperature for which heating balances cooling
-    Te0 = Te0_testarr[np.argmin(np.abs(heating - cooling))]
+        return heating - cooling
+
+    # physically allowed Te0 interval
+    Te0_t0 = (6.66e12)*beta*c3/(2.08*(1.0+beta))
+    Te0_t1 = Te0_t0/rmax
+
+    # boundaries of search space in log10(Te0)
+    Te0_lo = max(10.0**logTe0_lo, Te0_t1)
+    Te0_hi = min(10.0**logTe0_hi, Te0_t0)
+
+    if Te0_lo >= Te0_hi:
+        raise RuntimeError('No valid Te0 search interval with 0 <= t <= 1.')
+
+    # compute heating-cooling on boundary
+    balance_lo = electron_energy_balance(Te0_lo)
+    balance_hi = electron_energy_balance(Te0_hi)
+
+    # check to make sure nothing broke
+    if (not np.isfinite(balance_lo)) or (not np.isfinite(balance_hi)):
+        raise RuntimeError('Non-finite heating-cooling balance at the Te0 search boundaries.')
+
+    # deal with edge cases
+    on_boundary = False
+    if balance_lo == 0.0:
+        Te0 = Te0_lo
+        on_boundary = True
+    elif balance_hi == 0.0:
+        Te0 = Te0_hi
+        on_boundary = True
+    elif np.sign(balance_lo) == np.sign(balance_hi):
+        print('WARNING: heating-cooling does not change sign between 1e'+str(logTe0_lo)+' K and 1e'+str(logTe0_hi)+' K. Returning the boundary with the smaller residual.')
+        if np.abs(balance_lo) <= np.abs(balance_hi):
+            Te0 = Te0_lo
+        else:
+            Te0 = Te0_hi
+        on_boundary = True
+
+    # otherwise, binary search
+    else:
+
+        for _ in range(N_Te):
+
+            logTe0_mid = 0.5*(logTe0_lo + logTe0_hi)
+            Te0_mid = 10.0**logTe0_mid
+            balance_mid = electron_energy_balance(Te0_mid)
+
+            if not np.isfinite(balance_mid):
+                raise RuntimeError('Non-finite heating-cooling balance during Te0 binary search.')
+
+            if (balance_mid == 0.0) or ((logTe0_hi - logTe0_lo) <= tol_logTe0):
+                logTe0_lo = logTe0_mid
+                logTe0_hi = logTe0_mid
+                break
+
+            if np.sign(balance_mid) == np.sign(balance_lo):
+                logTe0_lo = logTe0_mid
+                balance_lo = balance_mid
+            else:
+                logTe0_hi = logTe0_mid
+                balance_hi = balance_mid
+
+        Te0 = 10.0**(0.5*(logTe0_lo + logTe0_hi))
 
     # print it out
     print('Electron temperature is '+str(np.round(Te0/(1.0e9),2))+' GK.')
 
     # check for extreme temperature values
-    if ((np.argmin(np.abs(heating - cooling)) == 0) | (np.argmin(np.abs(heating - cooling)) == (len(Te0_testarr)-1))):
+    if on_boundary:
         print('WARNING: the self-consistently identified temperature is '+str(np.round((Te0/(1.0e9)),2))+' GK, which is on the boundary of the tested temperature range.')
 
     ##############################################
