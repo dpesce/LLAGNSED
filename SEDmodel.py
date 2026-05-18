@@ -386,7 +386,7 @@ def compute_brems_spectrum(nu_arr,r,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
     # integrate over radius at each frequency
     if len(nu_arr) != 0:
         for inu, nu in enumerate(nu_arr):
-            integrand = (2.292e24)*(alpha**(-2.0))*(c1**(-2.0))*m*(mdot**2.0)*(Te0**(-1.0))*bremsF(theta_e)*np.exp(-(4.799e-11)*(nu/Te))*(r**(-2.0 + (2.0*s) + t))
+            integrand = (2.292e24)*(alpha**(-2.0))*(c1**(-2.0))*m*(mdot**2.0)*(Te0**(-1.0))*bremsF(theta_e)*np.exp(-(4.799e-11)*(nu/Te))*(r**((2.0*s) - t))
             Lnu_brems[inu] = np.sum(0.5*(integrand[1:] + integrand[0:-1])*(r[1:] - r[0:-1]))
 
     return Lnu_brems
