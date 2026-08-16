@@ -391,10 +391,9 @@ def compute_brems_spectrum(nu_arr,r,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
     Lnu_brems = np.zeros_like(nu_arr)
     
     # integrate over radius at each frequency
-    if len(nu_arr) != 0:
-        for inu, nu in enumerate(nu_arr):
-            integrand = (2.292e24)*(alpha**(-2.0))*(c1**(-2.0))*m*(mdot**2.0)*(Te0**(-1.0))*bremsF(theta_e)*np.exp(-(4.799e-11)*(nu/Te))*(r**((2.0*s) - t))
-            Lnu_brems[inu] = np.sum(0.5*(integrand[1:] + integrand[0:-1])*(r[1:] - r[0:-1]))
+    pref = (2.292e24)*(alpha**(-2.0))*(c1**(-2.0))*m*(mdot**2.0)*(Te0**(-1.0))*bremsF(theta_e)*(r**((2.0*s) - t))
+    integrand = pref[None,:]*np.exp(-(4.799e-11)*(nu_arr[:,None]/Te[None,:]))
+    Lnu_brems = np.sum(0.5*(integrand[:,1:] + integrand[:,0:-1])*(r[1:] - r[0:-1])[None,:], axis=1)
 
     return Lnu_brems
 
@@ -594,7 +593,10 @@ def SED(nu,m,mdot,verbose_return=False,s=0.5,alpha=0.2,beta=10.0,f=1.0,delta=0.3
 
         Te0 = 10.0**(0.5*(logTe0_lo + logTe0_hi))
 
-    # print it out
+    # solve for Te power-law index
+    t = (1.0 / np.log(rmax))*np.log((6.66e12)*beta*c3/(2.08*Te0*(1.0+beta)))
+
+    # print out the solved-for temperature
     print('Electron temperature normalization is '+str(np.round(Te0/(1.0e9),2))+' GK at r = 1; '
           +'Te(rmin) = '+str(np.round(Te0/((rmin**(1.0-t))*1.0e9),2))+' GK.')
 
@@ -604,9 +606,6 @@ def SED(nu,m,mdot,verbose_return=False,s=0.5,alpha=0.2,beta=10.0,f=1.0,delta=0.3
 
     ##############################################
     # construct the spectrum
-
-    # solve for Te power-law index
-    t = (1.0 / np.log(rmax))*np.log((6.66e12)*beta*c3/(2.08*Te0*(1.0+beta)))
 
     # determine critical synchrotron frequencies and luminosities
     nu_p, L_p = compute_peak_freq(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
