@@ -272,17 +272,20 @@ def compute_compt_spectrum(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3,nu_p
     # optical depth to electron scattering
     tau_es = 6.205*(alpha**(-1.0))*(c1**(-1.0))*mdot*rmin**(-(1.0/2.0) + s)
 
+    # electron temperature at rmin
+    Te_rmin = Te0 / (rmin**(1.0-t))
+
     # dimensionless temperature
-    theta_e0 = (1.68637e-10)*Te0
+    theta_e_rmin = (1.68637e-10)*Te_rmin
 
     # amplification factor
-    A = 1.0 + (4.0*theta_e0) + (16.0*(theta_e0**2.0))
+    A = 1.0 + (4.0*theta_e_rmin) + (16.0*(theta_e_rmin**2.0))
 
     # power-law index
     alpha_c = -np.log(tau_es) / np.log(A)
 
     # peak frequency
-    nu_f = (6.251e10)*Te0
+    nu_f = (6.251e10)*Te_rmin
 
     # construct Compton spectrum
     Lnu_compt = L_p*((nu_arr/nu_p)**(-alpha_c))
@@ -305,17 +308,20 @@ def compute_compt_power(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
     # optical depth to electron scattering
     tau_es = 6.205*(alpha**(-1.0))*(c1**(-1.0))*mdot*rmin**(-(1.0/2.0) + s)
 
+    # electron temperature at rmin
+    Te_rmin = Te0 / (rmin**(1.0-t))
+
     # dimensionless temperature
-    theta_e0 = (1.68637e-10)*Te0
+    theta_e_rmin = (1.68637e-10)*Te_rmin
 
     # amplification factor
-    A = 1.0 + (4.0*theta_e0) + (16.0*(theta_e0**2.0))
+    A = 1.0 + (4.0*theta_e_rmin) + (16.0*(theta_e_rmin**2.0))
 
     # power-law index
     alpha_c = -np.log(tau_es) / np.log(A)
 
     # peak frequency
-    nu_f = (6.251e10)*Te0
+    nu_f = (6.251e10)*Te_rmin
 
     # get peak synchrotron frequency
     nu_p, L_p = compute_peak_freq(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
