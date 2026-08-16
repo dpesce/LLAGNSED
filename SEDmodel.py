@@ -1,6 +1,6 @@
 import numpy as np
 from scipy import interpolate
-from scipy.special import kn
+from scipy.special import kn, kve
 np.seterr(divide='ignore')
 
 ##############################################
@@ -12,32 +12,13 @@ def qie_func(Te,Ti,ne):
     theta_e = (1.68637e-10)*Te
     theta_i = (9.18426e-14)*Ti
 
-    qie = (5.624e-32)*(((ne**2.0)*(Ti - Te))/(kn(2,1.0/theta_e)*kn(2,1.0/theta_i)))*(((((2.0*((theta_e + theta_i)**2.0)) + 1.0) / (theta_e + theta_i))*kn(1,(theta_e+theta_i)/(theta_e*theta_i))) + (2.0*kn(0,(theta_e+theta_i)/(theta_e*theta_i))))
+    # arguments of the Bessel functions; note that (theta_e+theta_i)/(theta_e*theta_i) = a + b
+    a = 1.0/theta_e
+    b = 1.0/theta_i
 
-    return qie
-
-def qie_func_approx(Te,Ti,ne):
-
-    # compute dimensionless temperatures
-    theta_e = (1.68637e-10)*Te
-    theta_i = (9.18426e-14)*Ti
-
-    qie = (5.624e-32)*(((ne**2.0)*(Ti - Te))/kn(2,1.0/theta_e))*(2.0 + (2.0*theta_e) + (1.0/theta_e))*np.exp(-1.0/theta_e)
-
-    return qie
-
-def qie_wrapper(Te,Ti,ne,r,rthresh=50.0):
-
-    # initialize array
-    qie = np.zeros_like(Te)
-
-    # for small r, use the exact expression:
-    ind = (r <= rthresh)
-    qie[ind] = qie_func(Te[ind],Ti[ind],ne[ind])
-
-    # for large r, use the approximation:
-    ind = (r > rthresh)
-    qie[ind] = qie_func_approx(Te[ind],Ti[ind],ne[ind])
+    # evaluate using the exponentially scaled Bessel functions kve(n,x) = kn(n,x)*exp(x);
+    # the exp(-(a+b)) factors cancel between numerator and denominator
+    qie = (5.624e-32)*((ne**2.0)*(Ti - Te))*(((((2.0*((theta_e + theta_i)**2.0)) + 1.0) / (theta_e + theta_i))*kve(1,a+b)) + (2.0*kve(0,a+b)))/(kve(2,a)*kve(2,b))
 
     return qie
 
@@ -401,7 +382,7 @@ def compute_brems_spectrum(nu_arr,r,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
 # SED main function
 
 def SED(nu,m,mdot,verbose_return=False,s=0.5,alpha=0.2,beta=10.0,f=1.0,delta=0.3,rmin=3.0,
-    rmax=1000.0,numin=1.0e2,numax=1.0e22,N_Te=100,N_r=30,N_nu=20000,rthresh=50.0,
+    rmax=1000.0,numin=1.0e2,numax=1.0e22,N_Te=100,N_r=30,N_nu=20000,
     logTe0_lo=8.0,logTe0_hi=12.0,tol_logTe0=1.0e-6):
     """
     Compute the SED of an advection-dominated accretion flow (ADAF), following Appendix A
@@ -430,7 +411,6 @@ def SED(nu,m,mdot,verbose_return=False,s=0.5,alpha=0.2,beta=10.0,f=1.0,delta=0.3
     N_Te: maximum number of bisection iterations for Te0
     N_r: number of radial grid points
     N_nu: number of frequency grid points
-    rthresh: radius beyond which the approximate electron-ion heating rate is used
     logTe0_lo, logTe0_hi: log10 bounds of the Te0 search, in K
     tol_logTe0: convergence tolerance of the Te0 search, in dex
 
@@ -499,7 +479,7 @@ def SED(nu,m,mdot,verbose_return=False,s=0.5,alpha=0.2,beta=10.0,f=1.0,delta=0.3
             Qplus = (9.430e38)*(f**(-1.0))*((1.0+beta)**(-1.0))*c3*m*mdot*((1.0-s)**(-1.0))*((rmin**(-1.0+s)) - (rmax**(-1.0+s)))
 
         # electron-ion heating rate
-        qie = qie_wrapper(Te,Ti,ne,r,rthresh=rthresh)
+        qie = qie_func(Te,Ti,ne)
 
         # integrate over volume
         integrand = (3.236e17)*(m**3.0)*qie*(r**2.0)
