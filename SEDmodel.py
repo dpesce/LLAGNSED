@@ -465,9 +465,9 @@ def SED(nu,m,mdot,verbose_return=False,s=0.5,alpha=0.2,beta=10.0,f=1.0,delta=0.3
 
         # viscous heating rate
         if s == 1:
-            Qplus = (9.430e38)*(f**(-1.0))*((1.0+beta)**(-1.0))*(c3**(1.0/2.0))*m*mdot*np.log(rmax/rmin)
+            Qplus = (9.430e38)*(f**(-1.0))*((1.0+beta)**(-1.0))*c3*m*mdot*np.log(rmax/rmin)
         else:
-            Qplus = (9.430e38)*(f**(-1.0))*((1.0+beta)**(-1.0))*(c3**(1.0/2.0))*m*mdot*((1.0-s)**(-1.0))*((rmin**(-1.0+s)) - (rmax**(-1.0+s)))
+            Qplus = (9.430e38)*(f**(-1.0))*((1.0+beta)**(-1.0))*c3*m*mdot*((1.0-s)**(-1.0))*((rmin**(-1.0+s)) - (rmax**(-1.0+s)))
 
         # electron-ion heating rate
         qie = qie_wrapper(Te,Ti,ne,r,rthresh=rthresh)
