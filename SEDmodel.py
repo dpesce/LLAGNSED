@@ -270,6 +270,7 @@ def compute_synch_spectrum(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3,nu_p
 def compute_compt_spectrum(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3,nu_p,L_p):
 
     # optical depth to electron scattering
+    # NOTE: the coefficient here follows M97 Eq. 31; P21 Eq. A25 is wrong by a factor of 2
     tau_es = 6.205*(alpha**(-1.0))*(c1**(-1.0))*mdot*rmin**(-(1.0/2.0) + s)
 
     # electron temperature at rmin
@@ -404,22 +405,45 @@ def SED(nu,m,mdot,verbose_return=False,s=0.5,alpha=0.2,beta=10.0,f=1.0,delta=0.3
     rmax=1000.0,numin=1.0e2,numax=1.0e22,N_Te=100,N_r=30,N_nu=20000,rthresh=50.0,
     logTe0_lo=8.0,logTe0_hi=12.0,tol_logTe0=1.0e-6):
     """
-    Inputs:
-    nu: array of frequencies at which to compute the SED
-    m: mass of BH, in solar masses
-    mdot: Eddington ratio = L/L_Edd = eta*(c**2)*Mdot/L_Edd
+    Compute the SED of an advection-dominated accretion flow (ADAF), following Appendix A
+    of Pesce et al. (2021), which follows Mahadevan (1997, M97) and Narayan & Yi (1995).
     
+    Inputs:
+    nu: array of frequencies at which to compute the SED, in Hz
+    m: mass of BH, in solar masses
+    mdot: mass accretion rate at r = 1, in units of Mdot_Edd = L_Edd/(eta*c**2), with eta = 0.1
+
+        Note: mdot is not a luminosity ratio.  The flow is radiatively inefficient, so
+        L_bol/L_Edd falls 1-4 orders of magnitude below mdot.  The accretion rate varies
+        with radius as Mdot(r) = mdot*Mdot_Edd*r**s, so the rate at the inner edge is
+        mdot*rmin**s (~ 1.73*mdot for the default rmin = 3, s = 0.5).
+
+    Optional inputs:
+    verbose_return: if True, also return Te0 and the individual SED components
+    s: power-law index of the radial accretion-rate profile, Mdot ~ r**s
+    alpha: viscosity parameter
+    beta: plasma beta = gas pressure / magnetic pressure.  Note: this differs from M97, whose
+          beta is gas pressure / total pressure; beta_M97 = beta/(1+beta).
+    f: fraction of the viscously dissipated energy that is advected
+    delta: fraction of the viscous heating deposited directly into the electrons
+    rmin, rmax: inner and outer radii of the flow, in Schwarzschild radii
+    numin, numax: limits of the internal frequency grid, in Hz; nu must lie within them
+    N_Te: maximum number of bisection iterations for Te0
+    N_r: number of radial grid points
+    N_nu: number of frequency grid points
+    rthresh: radius beyond which the approximate electron-ion heating rate is used
+    logTe0_lo, logTe0_hi: log10 bounds of the Te0 search, in K
+    tol_logTe0: convergence tolerance of the Te0 search, in dex
+
     Returns:
-    if verbose_return is set to False:
-        Lnu: total luminosity density as a function of frequency
-        nu_p: peak synchrotron frequency
-    if verbose_return is set to True:
-        Lnu: total luminosity density as a function of frequency
-        nu_p: peak synchrotron frequency
-        Te0: electron temperature at small radii
-        Lnu_synch: synchrotron luminosity density as a function of frequency
-        Lnu_compt: inverse Compton luminosity density as a function of frequency
-        Lnu_brems: bremsstrahlung luminosity density as a function of frequency
+    Lnu: total luminosity density as a function of frequency, in erg/s/Hz
+    nu_p: peak synchrotron frequency, in Hz
+    if verbose_return is set to True, additionally:
+        Te0: Normalization of the electron temperature profile, in K.  The profile is
+             Te(r) = Te0/r**(1-t), so Te0 is its value extrapolated to r = 1, which lies
+             inside rmin; Te0 is hotter than every electron in the flow.  The hottest
+             physical temperature is Te(rmin) = Te0/rmin**(1-t).
+        Lnu_synch, Lnu_compt, Lnu_brems: the individual components, in erg/s/Hz
     """
 
     ##############################################
@@ -571,7 +595,8 @@ def SED(nu,m,mdot,verbose_return=False,s=0.5,alpha=0.2,beta=10.0,f=1.0,delta=0.3
         Te0 = 10.0**(0.5*(logTe0_lo + logTe0_hi))
 
     # print it out
-    print('Electron temperature is '+str(np.round(Te0/(1.0e9),2))+' GK.')
+    print('Electron temperature normalization is '+str(np.round(Te0/(1.0e9),2))+' GK at r = 1; '
+          +'Te(rmin) = '+str(np.round(Te0/((rmin**(1.0-t))*1.0e9),2))+' GK.')
 
     # check for extreme temperature values
     if on_boundary:
