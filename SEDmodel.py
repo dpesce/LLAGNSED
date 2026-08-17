@@ -87,132 +87,58 @@ def find_critical_freq(nu_arr,volume,surface,n_bisect=10):
 
     return nu_crit, Lnu_crit
 
-def compute_peak_freq(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
+def synch_branches(nu_arr,Te0,t,r_eval,m,mdot,s,alpha,beta,c1,c3):
+    """
+    Optically-thin ("volume") and optically-thick ("surface") synchrotron luminosity
+    densities at a single radius r_eval.  Their intersection defines the critical frequency
+    nu_c(r_eval) below which the synchrotron emission is self-absorbed.  Both branches use
+    the same uniform-sphere convention (NY95 eq. 3.13 / M97 eq. 19): the volume branch is
+    the emissivity times the volume of a sphere of radius R_eval, and the surface branch is
+    Rayleigh-Jeans emission from the surface of that same sphere.
+    """
 
-    # Te
-    Te = Te0 / (rmin**(1.0-t))
+    # Te at this radius
+    Te = Te0 / (r_eval**(1.0-t))
 
     # dimensionless temperature
     theta_e = (1.68637e-10)*Te
 
-    # electron number density
-    ne = (3.158e19)*(alpha**-1.0)*(c1**-1.0)*(m**-1.0)*mdot*(rmin**((-3.0/2.0) + s))
-
     # gyro frequency
-    nu_b = (3.998e15)*((1+beta)**(-1.0/2.0))*(alpha**(-1.0/2.0))*(c1**(-1.0/2.0))*(c3**(1.0/2.0))*(m**(-1.0/2.0))*(mdot**(1.0/2.0))*(rmin**((-5.0/4.0) + (s/2.0)))
+    nu_b = (3.998e15)*((1+beta)**(-1.0/2.0))*(alpha**(-1.0/2.0))*(c1**(-1.0/2.0))*(c3**(1.0/2.0))*(m**(-1.0/2.0))*(mdot**(1.0/2.0))*(r_eval**((-5.0/4.0) + (s/2.0)))
 
     # dimensionless frequency
     xM = 2.0*nu_arr/(3.0*nu_b*(theta_e**2.0))
 
-    # find critical frequency at this radius
-    volume = (1.896e8)*(relMax(xM)/kn(2,1.0/theta_e))*(alpha**(-1.0))*(c1**(-1.0))*(m**2.0)*mdot*nu_arr*(rmin**((3.0/2.0) + s))
-    surface = (1.058e-24)*(nu_arr**2.0)*Te0*(m**2.0)*(rmin**(1.0+t))
+    # optically-thin and optically-thick branches
+    volume = (1.896e8)*(relMax(xM)/kn(2,1.0/theta_e))*(alpha**(-1.0))*(c1**(-1.0))*(m**2.0)*mdot*nu_arr*(r_eval**((3.0/2.0) + s))
+    surface = (1.058e-24)*(nu_arr**2.0)*Te0*(m**2.0)*(r_eval**(1.0+t))
 
-    # critical frequency
+    return volume, surface
+
+def compute_peak_freq(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
+
+    # the peak frequency is the critical frequency at the innermost radius
+    volume, surface = synch_branches(nu_arr,Te0,t,rmin,m,mdot,s,alpha,beta,c1,c3)
     nu_p, L_p = find_critical_freq(nu_arr,volume,surface)
 
     return nu_p, L_p
 
 def compute_min_freq(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
 
-    # Te
-    Te = Te0 / (rmax**(1.0-t))
-
-    # dimensionless temperature
-    theta_e = (1.68637e-10)*Te
-
-    # electron number density
-    ne = (3.158e19)*(alpha**-1.0)*(c1**-1.0)*(m**-1.0)*mdot*(rmax**((-3.0/2.0) + s))
-
-    # gyro frequency
-    nu_b = (3.998e15)*((1+beta)**(-1.0/2.0))*(alpha**(-1.0/2.0))*(c1**(-1.0/2.0))*(c3**(1.0/2.0))*(m**(-1.0/2.0))*(mdot**(1.0/2.0))*(rmax**((-5.0/4.0) + (s/2.0)))
-
-    # dimensionless frequency
-    xM = 2.0*nu_arr/(3.0*nu_b*(theta_e**2.0))
-
-    # find critical frequency at this radius
-    volume = (1.896e8)*(relMax(xM)/kn(2,1.0/theta_e))*(alpha**(-1.0))*(c1**(-1.0))*(m**2.0)*mdot*nu_arr*(rmax**((3.0/2.0) + s))
-    surface = (1.058e-24)*(nu_arr**2.0)*Te0*(m**2.0)*(rmax**(1.0+t))
-
-    # critical frequency
+    # the minimum frequency is the critical frequency at the outermost radius
+    volume, surface = synch_branches(nu_arr,Te0,t,rmax,m,mdot,s,alpha,beta,c1,c3)
     nu_min, Lnu_min = find_critical_freq(nu_arr,volume,surface)
 
     return nu_min, Lnu_min
 
 def compute_synch_power(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
 
-    ##############################################
-    # get critical frequency at which synchrotron becomes optically thin at rmin
+    # critical frequencies at the inner and outer edges
+    nu_p, L_p = compute_peak_freq(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
+    nu_min, Lnu_min = compute_min_freq(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
 
-    # Te
-    Te = Te0 / (rmin**(1.0-t))
-
-    # dimensionless temperature
-    theta_e = (1.68637e-10)*Te
-
-    # gyro frequency
-    nu_b = (3.998e15)*((1+beta)**(-1.0/2.0))*(alpha**(-1.0/2.0))*(c1**(-1.0/2.0))*(c3**(1.0/2.0))*(m**(-1.0/2.0))*(mdot**(1.0/2.0))*(rmin**((-5.0/4.0) + (s/2.0)))
-
-    # dimensionless frequency
-    xM = 2.0*nu_arr/(3.0*nu_b*(theta_e**2.0))
-
-    # find critical frequency at this radius
-    volume = (1.896e8)*(relMax(xM)/kn(2,1.0/theta_e))*(alpha**(-1.0))*(c1**(-1.0))*(m**2.0)*mdot*nu_arr*(rmin**((3.0/2.0) + s))
-    surface = (1.058e-24)*(nu_arr**2.0)*Te0*(m**2.0)*(rmin**(1.0+t))
-
-    # critical frequency
-    nu_p, Lnu_p = find_critical_freq(nu_arr,volume,surface)
-
-    # save the spectrum at rmin
-    Lnu_rmin = np.zeros_like(nu_arr)
-    ind_lo = (nu_arr <= nu_p)
-    Lnu_rmin[ind_lo] = surface[ind_lo]
-    ind_hi = (nu_arr > nu_p)
-    Lnu_rmin[ind_hi] = volume[ind_hi]
-
-    ##############################################
-    # get critical frequency at which synchrotron becomes optically thin at rmax
-
-    # Te
-    Te = Te0 / (rmax**(1.0-t))
-
-    # dimensionless temperature
-    theta_e = (1.68637e-10)*Te
-
-    # gyro frequency
-    nu_b = (3.998e15)*((1+beta)**(-1.0/2.0))*(alpha**(-1.0/2.0))*(c1**(-1.0/2.0))*(c3**(1.0/2.0))*(m**(-1.0/2.0))*(mdot**(1.0/2.0))*(rmax**((-5.0/4.0) + (s/2.0)))
-
-    # dimensionless frequency
-    xM = 2.0*nu_arr/(3.0*nu_b*(theta_e**2.0))
-
-    # find critical frequency at this radius
-    volume = (1.896e8)*(relMax(xM)/kn(2,1.0/theta_e))*(alpha**(-1.0))*(c1**(-1.0))*(m**2.0)*mdot*nu_arr*(rmax**((3.0/2.0) + s))
-    surface = (1.058e-24)*(nu_arr**2.0)*Te0*(m**2.0)*(rmax**(1.0+t))
-    
-    # critical frequency
-    nu_min, Lnu_min = find_critical_freq(nu_arr,volume,surface)
-
-    # construct synchrotron spetrum
-    Lnu_synch = np.zeros_like(nu_arr)
-
-    # synchrotron emission below nu_min is blackbody
-    index = (nu_arr <= nu_min)
-    Lnu_synch[index] = Lnu_min*((nu_arr[index]/nu_min)**2.0)
-    nu_lo = np.max(nu_arr[index])
-    L_lo = np.copy(Lnu_synch[index])[np.argmax(nu_arr[index])]
-
-    # synchrotron emission above nu_p is Maxwellian
-    index = (nu_arr >= nu_p)
-    Lnu_synch[index] = np.copy(Lnu_rmin[index])
-    nu_hi = np.min(nu_arr[index])
-    L_hi = np.copy(Lnu_synch[index])[np.argmin(nu_arr[index])]
-
-    # synchrotron emission bewteen nu_min and nu_p is a power-law
-    pl_exp = np.log(L_hi/L_lo) / np.log(nu_hi/nu_lo)
-    index = ((nu_arr > nu_min) & (nu_arr < nu_p))
-    Lnu_synch[index] = L_lo*((nu_arr[index]/nu_lo)**pl_exp)
-
-    # total synchrotron power is integral over frequency
+    # integrate the spectrum
+    Lnu_synch = compute_synch_spectrum(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3,nu_p,L_p,nu_min,Lnu_min)
     P_synch = np.sum(0.5*(Lnu_synch[1:] + Lnu_synch[0:-1])*(nu_arr[1:] - nu_arr[0:-1]))
 
     return P_synch
@@ -229,11 +155,8 @@ def compute_synch_spectrum(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3,nu_p
     # synchrotron emission above nu_p is Maxwellian
     index = (nu_arr >= nu_p)
 
-    Te = Te0 / (rmin**(1.0-t))
-    theta_e = (1.68637e-10)*Te
-    nu_b = (3.998e15)*((1+beta)**(-1.0/2.0))*(alpha**(-1.0/2.0))*(c1**(-1.0/2.0))*(c3**(1.0/2.0))*(m**(-1.0/2.0))*(mdot**(1.0/2.0))*(rmin**((-5.0/4.0) + (s/2.0)))
-    xM = 2.0*nu_arr[index]/(3.0*nu_b*(theta_e**2.0))
-    Lnu_synch[index] = (1.896e8)*(relMax(xM)/kn(2,1.0/theta_e))*(alpha**(-1.0))*(c1**(-1.0))*(m**2.0)*mdot*nu_arr[index]*(rmin**((3.0/2.0) + s))
+    volume, surface = synch_branches(nu_arr,Te0,t,rmin,m,mdot,s,alpha,beta,c1,c3)
+    Lnu_synch[index] = volume[index]
 
     nu_hi = np.min(nu_arr[index])
     L_hi = np.copy(Lnu_synch[index])[np.argmin(nu_arr[index])]
@@ -275,7 +198,7 @@ def compute_compt_spectrum(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3,nu_p
                          - ((nu_arr/(0.5*nu_f))**2.0)      # exponential cutoff at nu_f
                          - ((nu_arr/(1.0*nu_p))**-4.0))    # exponential cutoff at nu_p
         Lnu_compt = np.exp(log_Lnu_compt)
-    
+
     return Lnu_compt
 
 def compute_compt_power(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
