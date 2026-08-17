@@ -54,6 +54,10 @@ def find_critical_freq(nu_arr,volume,surface,n_bisect=10):
 
     # if the sign never changes, then fall back to the point of minimum absolute difference
     if (sign_change_idx.size == 0):
+        warnings.warn('no synchrotron self-absorption crossing was bracketed within the '
+                      'sampled frequency range; falling back to the point of closest '
+                      'approach, which may not be a real critical frequency',
+                      RuntimeWarning, stacklevel=2)
         i = np.argmin(np.abs(diff))
         nu_crit = nu_arr[i]
         Lnu_crit = 0.5*(volume[i] + surface[i])
