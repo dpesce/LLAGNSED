@@ -162,11 +162,8 @@ def compute_synch_spectrum(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3,nu_p
     volume, surface = synch_branches(nu_arr,Te0,t,rmin,m,mdot,s,alpha,beta,c1,c3)
     Lnu_synch[index] = volume[index]
 
-    nu_hi = np.min(nu_arr[index])
-    L_hi = np.copy(Lnu_synch[index])[np.argmin(nu_arr[index])]
-
     # synchrotron emission bewteen nu_min and nu_p is a power-law
-    pl_exp = np.log(L_hi/Lnu_min) / np.log(nu_hi/nu_min)
+    pl_exp = np.log(L_p/Lnu_min) / np.log(nu_p/nu_min)
     index = ((nu_arr > nu_min) & (nu_arr < nu_p))
     Lnu_synch[index] = Lnu_min*((nu_arr[index]/nu_min)**pl_exp)
 
@@ -323,7 +320,8 @@ def SED(nu,m,mdot,verbose_return=False,verbose=True,s=0.5,alpha=0.2,beta=10.0,f=
     f: fraction of the viscously dissipated energy that is advected
     delta: fraction of the viscous heating deposited directly into the electrons
     rmin, rmax: inner and outer radii of the flow, in Schwarzschild radii
-    numin, numax: limits of the internal frequency grid, in Hz; nu must lie within them
+    numin, numax: limits of the internal frequency grid, in Hz; requested frequencies
+                  outside this range are returned as zero
     N_Te: maximum number of bisection iterations for Te0
     N_r: number of radial grid points
     N_nu: number of frequency grid points
@@ -515,17 +513,17 @@ def SED(nu,m,mdot,verbose_return=False,verbose=True,s=0.5,alpha=0.2,beta=10.0,f=
 
     # synchrotron emission
     Lnu_synch_full = compute_synch_spectrum(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3,nu_p,L_p,nu_min,Lnu_min)
-    synch_interpolator = interpolate.interp1d(np.log10(nu_arr), np.log10(Lnu_synch_full),kind='linear',fill_value=0.0)
+    synch_interpolator = interpolate.interp1d(np.log10(nu_arr), np.log10(Lnu_synch_full),kind='linear',bounds_error=False,fill_value=-np.inf)
     Lnu_synch = 10.0**synch_interpolator(np.log10(nu))
 
     # inverse Compton emission
     Lnu_compt_full = compute_compt_spectrum(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3,nu_p,L_p)
-    compt_interpolator = interpolate.interp1d(np.log10(nu_arr), np.log10(Lnu_compt_full),kind='linear',fill_value=0.0)
+    compt_interpolator = interpolate.interp1d(np.log10(nu_arr), np.log10(Lnu_compt_full),kind='linear',bounds_error=False,fill_value=-np.inf)
     Lnu_compt = 10.0**compt_interpolator(np.log10(nu))
 
     # bremsstrahlung emission
     Lnu_brems_full = compute_brems_spectrum(nu_arr,r,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
-    brems_interpolator = interpolate.interp1d(np.log10(nu_arr), np.log10(Lnu_brems_full),kind='linear',fill_value=0.0)
+    brems_interpolator = interpolate.interp1d(np.log10(nu_arr), np.log10(Lnu_brems_full),kind='linear',bounds_error=False,fill_value=-np.inf)
     Lnu_brems = 10.0**brems_interpolator(np.log10(nu))
 
     errstate_ctx.__exit__(None, None, None)
