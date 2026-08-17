@@ -269,20 +269,13 @@ def compute_compt_spectrum(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3,nu_p
     # peak frequency
     nu_f = (6.251e10)*Te_rmin
 
-    # construct Compton spectrum
-    Lnu_compt = L_p*((nu_arr/nu_p)**(-alpha_c))
-
-    # adding in exponential cutoffs at nu_p and nu_f
-    Lnu_compt *= np.exp(-((nu_arr/(0.5*nu_f))**2.0))
-    Lnu_compt *= np.exp(-((nu_arr/(1.0*nu_p))**-4.0))
-
-    # # original, sharp cutoffs
-    # ind_lo = (nu_arr < nu_p)
-    # Lnu_compt[ind_lo] = 0.0
-
-    # ind_hi = (nu_arr > nu_f)
-    # Lnu_compt[ind_hi] = 0.0
-
+    # construct Compton spectrum, adding exponential cutoffs at nu_p and nu_f
+    with np.errstate(over='ignore'):
+        log_Lnu_compt = (np.log(L_p) - (alpha_c*np.log(nu_arr/nu_p))
+                         - ((nu_arr/(0.5*nu_f))**2.0)      # exponential cutoff at nu_f
+                         - ((nu_arr/(1.0*nu_p))**-4.0))    # exponential cutoff at nu_p
+        Lnu_compt = np.exp(log_Lnu_compt)
+    
     return Lnu_compt
 
 def compute_compt_power(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
@@ -309,7 +302,8 @@ def compute_compt_power(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
     nu_p, L_p = compute_peak_freq(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
 
     # compute total power
-    P_compt = (nu_p*L_p/(1.0 - alpha_c))*(((nu_f/nu_p)**(1.0-alpha_c)) - 1.0)
+    Lnu_compt = compute_compt_spectrum(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3,nu_p,L_p)
+    P_compt = np.sum(0.5*(Lnu_compt[1:] + Lnu_compt[0:-1])*(nu_arr[1:] - nu_arr[0:-1]))
 
     return P_compt
 
