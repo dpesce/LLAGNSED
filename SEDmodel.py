@@ -1,7 +1,7 @@
+import warnings
 import numpy as np
 from scipy import interpolate
 from scipy.special import kn, kve
-np.seterr(divide='ignore')
 
 ##############################################
 # electron-ion heating functions
@@ -272,7 +272,7 @@ def compute_brems_power(r,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
     return P_brems
 
 def compute_brems_spectrum(nu_arr,r,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
-    
+
     # Te radial profile
     Te = Te0 / (r**(1.0-t))
 
@@ -292,8 +292,8 @@ def compute_brems_spectrum(nu_arr,r,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
 ##############################################
 # SED main function
 
-def SED(nu,m,mdot,verbose_return=False,s=0.5,alpha=0.2,beta=10.0,f=1.0,delta=0.3,rmin=3.0,
-    rmax=1000.0,numin=1.0e2,numax=1.0e22,N_Te=100,N_r=30,N_nu=20000,
+def SED(nu,m,mdot,verbose_return=False,verbose=True,s=0.5,alpha=0.2,beta=10.0,f=1.0,delta=0.3,
+    rmin=3.0,rmax=1000.0,numin=1.0e2,numax=1.0e22,N_Te=100,N_r=30,N_nu=20000,
     logTe0_lo=8.0,logTe0_hi=12.0,tol_logTe0=1.0e-6):
     """
     Compute the SED of an advection-dominated accretion flow (ADAF), following Appendix A
@@ -311,6 +311,7 @@ def SED(nu,m,mdot,verbose_return=False,s=0.5,alpha=0.2,beta=10.0,f=1.0,delta=0.3
 
     Optional inputs:
     verbose_return: if True, also return Te0 and the individual SED components
+    verbose: if True, print the converged electron temperature
     s: power-law index of the radial accretion-rate profile, Mdot ~ r**s
     alpha: viscosity parameter
     beta: plasma beta = gas pressure / magnetic pressure.  Note: this differs from M97, whose
@@ -340,11 +341,11 @@ def SED(nu,m,mdot,verbose_return=False,s=0.5,alpha=0.2,beta=10.0,f=1.0,delta=0.3
     # warnings
 
     if (np.log10(mdot) >= -1.7):
-        print('WARNING: the input accretion rate is larger than the maximum log(mdot) = -1.7, which will yield unphysical results')
+        warnings.warn('the input accretion rate is larger than the maximum log(mdot) = -1.7, which will yield unphysical results', RuntimeWarning, stacklevel=2)
     if ((nu < numin).sum() > 0):
-        print('WARNING: the minimum input frequency is smaller than the minimum internally-computed frequency of '+str(numin)+' Hz')
+        warnings.warn('the minimum input frequency is smaller than the minimum internally-computed frequency of '+str(numin)+' Hz', RuntimeWarning, stacklevel=2)
     if ((nu > numax).sum() > 0):
-        print('WARNING: the maximum input frequency is larger than the maximum internally-computed frequency of '+str(numax)+' Hz')
+        warnings.warn('the maximum input frequency is larger than the maximum internally-computed frequency of '+str(numax)+' Hz', RuntimeWarning, stacklevel=2)
 
     ##############################################
     # derived quantities
@@ -451,7 +452,7 @@ def SED(nu,m,mdot,verbose_return=False,s=0.5,alpha=0.2,beta=10.0,f=1.0,delta=0.3
         Te0 = Te0_hi
         on_boundary = True
     elif np.sign(balance_lo) == np.sign(balance_hi):
-        print('WARNING: heating-cooling does not change sign between 1e'+str(logTe0_lo)+' K and 1e'+str(logTe0_hi)+' K. Returning the boundary with the smaller residual.')
+        warnings.warn('heating-cooling does not change sign between 1e'+str(logTe0_lo)+' K and 1e'+str(logTe0_hi)+' K. Returning the boundary with the smaller residual.', RuntimeWarning, stacklevel=2)
         if np.abs(balance_lo) <= np.abs(balance_hi):
             Te0 = Te0_lo
         else:
@@ -488,12 +489,13 @@ def SED(nu,m,mdot,verbose_return=False,s=0.5,alpha=0.2,beta=10.0,f=1.0,delta=0.3
     t = (1.0 / np.log(rmax))*np.log((6.66e12)*beta*c3/(2.08*Te0*(1.0+beta)))
 
     # print out the solved-for temperature
-    print('Electron temperature normalization is '+str(np.round(Te0/(1.0e9),2))+' GK at r = 1; '
-          +'Te(rmin) = '+str(np.round(Te0/((rmin**(1.0-t))*1.0e9),2))+' GK.')
+    if verbose:
+        print('Electron temperature normalization is '+str(np.round(Te0/(1.0e9),2))+' GK at r = 1; '
+              +'Te(rmin) = '+str(np.round(Te0/((rmin**(1.0-t))*1.0e9),2))+' GK.')
 
     # check for extreme temperature values
     if on_boundary:
-        print('WARNING: the self-consistently identified temperature is '+str(np.round((Te0/(1.0e9)),2))+' GK, which is on the boundary of the tested temperature range.')
+        warnings.warn('the self-consistently identified temperature is '+str(np.round((Te0/(1.0e9)),2))+' GK, which is on the boundary of the tested temperature range.', RuntimeWarning, stacklevel=2)
 
     ##############################################
     # construct the spectrum
@@ -501,6 +503,11 @@ def SED(nu,m,mdot,verbose_return=False,s=0.5,alpha=0.2,beta=10.0,f=1.0,delta=0.3
     # determine critical synchrotron frequencies and luminosities
     nu_p, L_p = compute_peak_freq(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
     nu_min, Lnu_min = compute_min_freq(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
+
+    # the component arrays contain exact zeros, whose log10 is -inf; that is intended
+    # (10**-inf = 0), so silence only the divide warning it raises, and only here
+    errstate_ctx = np.errstate(divide='ignore')
+    errstate_ctx.__enter__()
 
     # synchrotron emission
     Lnu_synch_full = compute_synch_spectrum(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3,nu_p,L_p,nu_min,Lnu_min)
@@ -516,6 +523,8 @@ def SED(nu,m,mdot,verbose_return=False,s=0.5,alpha=0.2,beta=10.0,f=1.0,delta=0.3
     Lnu_brems_full = compute_brems_spectrum(nu_arr,r,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
     brems_interpolator = interpolate.interp1d(np.log10(nu_arr), np.log10(Lnu_brems_full),kind='linear',fill_value=0.0)
     Lnu_brems = 10.0**brems_interpolator(np.log10(nu))
+
+    errstate_ctx.__exit__(None, None, None)
     
     # combine
     Lnu = Lnu_synch + Lnu_compt + Lnu_brems
