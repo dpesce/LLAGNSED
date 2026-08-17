@@ -259,9 +259,6 @@ def bremsF(theta_e):
 
 def compute_brems_power(r,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
 
-    # solve for Te power-law index
-    t = (1.0 / np.log(rmax))*np.log((6.66e12)*beta*c3/(2.08*Te0*(1.0+beta)))
-
     # Te radial profile
     Te = Te0 / (r**(1.0-t))
 
@@ -275,10 +272,7 @@ def compute_brems_power(r,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
     return P_brems
 
 def compute_brems_spectrum(nu_arr,r,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
-
-    # solve for Te power-law index
-    t = (1.0 / np.log(rmax))*np.log((6.66e12)*beta*c3/(2.08*Te0*(1.0+beta)))
-
+    
     # Te radial profile
     Te = Te0 / (r**(1.0-t))
 
