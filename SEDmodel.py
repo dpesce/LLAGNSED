@@ -337,6 +337,9 @@ def SED(nu,m,mdot,verbose_return=False,verbose=True,s=0.5,alpha=0.2,beta=10.0,f=
              inside rmin; Te0 is hotter than every electron in the flow.  The hottest
              physical temperature is Te(rmin) = Te0/rmin**(1-t).
         Lnu_synch, Lnu_compt, Lnu_brems: the individual components, in erg/s/Hz
+        f_implied: the advected fraction implied by the computed radiative losses,
+                   1 - Q^-/Q^+.  The input f should match this for self-consistency;
+                   f = 1 is a good approximation only for mdot << 1e-3.
     """
 
     ##############################################
@@ -500,6 +503,31 @@ def SED(nu,m,mdot,verbose_return=False,verbose=True,s=0.5,alpha=0.2,beta=10.0,f=
         warnings.warn('the self-consistently identified temperature is '+str(np.round((Te0/(1.0e9)),2))+' GK, which is on the boundary of the tested temperature range.', RuntimeWarning, stacklevel=2)
 
     ##############################################
+    # check the self-consistency of the assumed advected fraction f
+
+    # Recompute the implied value of f and warn if it is badly violated;
+    # f = 1 is the low-accretion-rate approximation
+    if s == 1:
+        Qplus_final = (9.430e38)*(f**(-1.0))*((1.0+beta)**(-1.0))*c3*m*mdot*np.log(rmax/rmin)
+    else:
+        Qplus_final = (9.430e38)*(f**(-1.0))*((1.0+beta)**(-1.0))*c3*m*mdot*((1.0-s)**(-1.0))*((rmin**(-1.0+s)) - (rmax**(-1.0+s)))
+    Qminus_final = (compute_synch_power(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
+                    + compute_compt_power(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
+                    + compute_brems_power(r,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3))
+    f_implied = 1.0 - (Qminus_final/Qplus_final)
+    if f_implied <= 0.0:
+        warnings.warn('the flow radiates more energy than viscosity dissipates (implied '
+                      'advected fraction f = '+str(np.round(f_implied,3))+' <= 0); the '
+                      'accretion rate is above the critical value for an advection-'
+                      'dominated solution and the result is unphysical',
+                      RuntimeWarning, stacklevel=2)
+    elif f_implied < 0.9*f:
+        warnings.warn('the assumed advected fraction f = '+str(f)+' is inconsistent with '
+                      'the computed radiative losses, which imply f = '
+                      +str(np.round(f_implied,3))+'; f = 1 is only a good approximation at '
+                      'low accretion rates', RuntimeWarning, stacklevel=2)
+
+    ##############################################
     # construct the spectrum
 
     # determine critical synchrotron frequencies and luminosities
@@ -534,6 +562,6 @@ def SED(nu,m,mdot,verbose_return=False,verbose=True,s=0.5,alpha=0.2,beta=10.0,f=
     ##############################################
     
     if verbose_return:
-        return Lnu, nu_p, Te0, Lnu_synch, Lnu_compt, Lnu_brems
+        return Lnu, nu_p, Te0, Lnu_synch, Lnu_compt, Lnu_brems, f_implied
     else:
         return Lnu, nu_p
