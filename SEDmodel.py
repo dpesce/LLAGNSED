@@ -291,85 +291,49 @@ def compute_brems_spectrum(nu_arr,r,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
     return Lnu_brems
 
 ##############################################
-# SED main function
+# integrated power budget
 
-def SED(nu,m,mdot,verbose_return=False,verbose=True,s=0.5,alpha=0.2,beta=10.0,f=1.0,delta=0.3,
-    rmin=3.0,rmax=1000.0,numin=1.0e2,numax=1.0e22,N_Te=100,N_r=30,N_nu=20000,
-    logTe0_lo=8.0,logTe0_hi=12.0,tol_logTe0=1.0e-6):
+def compute_powers(nu_arr,r,Te0,t,f,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
     """
-    Compute the SED of an advection-dominated accretion flow (ADAF), following Appendix A
-    of Pesce et al. (2021), which follows Mahadevan (1997, M97) and Narayan & Yi (1995).
-    
-    Inputs:
-    nu: array of frequencies at which to compute the SED, in Hz
-    m: mass of BH, in solar masses
-    mdot: mass accretion rate at r = 1, in units of Mdot_Edd = L_Edd/(eta*c**2), with eta = 0.1
-
-        Note: mdot is not a luminosity ratio.  The flow is radiatively inefficient, so
-        L_bol/L_Edd falls 1-4 orders of magnitude below mdot.  The accretion rate varies
-        with radius as Mdot(r) = mdot*Mdot_Edd*r**s, so the rate at the inner edge is
-        mdot*rmin**s (~ 1.73*mdot for the default rmin = 3, s = 0.5).
-
-    Optional inputs:
-    verbose_return: if True, also return Te0 and the individual SED components
-    verbose: if True, print the converged electron temperature
-    s: power-law index of the radial accretion-rate profile, Mdot ~ r**s
-    alpha: viscosity parameter
-    beta: plasma beta = gas pressure / magnetic pressure.  Note: this differs from M97, whose
-          beta is gas pressure / total pressure; beta_M97 = beta/(1+beta).
-    f: fraction of the viscously dissipated energy that is advected
-    delta: fraction of the viscous heating deposited directly into the electrons
-    rmin, rmax: inner and outer radii of the flow, in Schwarzschild radii
-    numin, numax: limits of the internal frequency grid, in Hz; requested frequencies
-                  outside this range are returned as zero
-    N_Te: maximum number of bisection iterations for Te0
-    N_r: number of radial grid points
-    N_nu: number of frequency grid points
-    logTe0_lo, logTe0_hi: log10 bounds of the Te0 search, in K
-    tol_logTe0: convergence tolerance of the Te0 search, in dex
-
-    Returns:
-    Lnu: total luminosity density as a function of frequency, in erg/s/Hz
-    nu_p: peak synchrotron frequency, in Hz
-    if verbose_return is set to True, additionally:
-        Te0: Normalization of the electron temperature profile, in K.  The profile is
-             Te(r) = Te0/r**(1-t), so Te0 is its value extrapolated to r = 1, which lies
-             inside rmin; Te0 is hotter than every electron in the flow.  The hottest
-             physical temperature is Te(rmin) = Te0/rmin**(1-t).
-        Lnu_synch, Lnu_compt, Lnu_brems: the individual components, in erg/s/Hz
-        f_implied: the advected fraction implied by the computed radiative losses,
-                   1 - Q^-/Q^+.  The input f should match this for self-consistency;
-                   f = 1 is a good approximation only for mdot << 1e-3.
+    Total viscous dissipation Q+ (P21 eq. A10) and total radiated power Q- (P21 eq. A2).
+    NY95 define the advected fraction as f = 1 - Q-/Q+.
     """
 
-    ##############################################
-    # warnings
+    if s == 1:
+        Qplus = (9.430e38)*(f**(-1.0))*((1.0+beta)**(-1.0))*c3*m*mdot*np.log(rmax/rmin)
+    else:
+        Qplus = (9.430e38)*(f**(-1.0))*((1.0+beta)**(-1.0))*c3*m*mdot*((1.0-s)**(-1.0))*((rmin**(-1.0+s)) - (rmax**(-1.0+s)))
 
-    if (np.log10(mdot) >= -1.7):
-        warnings.warn('the input accretion rate is larger than the maximum log(mdot) = -1.7, which will yield unphysical results', RuntimeWarning, stacklevel=2)
-    if ((nu < numin).sum() > 0):
-        warnings.warn('the minimum input frequency is smaller than the minimum internally-computed frequency of '+str(numin)+' Hz', RuntimeWarning, stacklevel=2)
-    if ((nu > numax).sum() > 0):
-        warnings.warn('the maximum input frequency is larger than the maximum internally-computed frequency of '+str(numax)+' Hz', RuntimeWarning, stacklevel=2)
+    Qminus = (compute_synch_power(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
+              + compute_compt_power(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
+              + compute_brems_power(r,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3))
 
-    ##############################################
+    return Qplus, Qminus
+
+##############################################
+# electron temperature solver
+
+def solve_temperature(nu_arr,r,m,mdot,f,s,alpha,beta,delta,rmin,rmax,N_Te,logTe0_lo,logTe0_hi,tol_logTe0):
+    """
+    Solve the electron energy balance (P21 eq. A1) for the electron temperature
+    normalization Te0, at a fixed advected fraction f.
+
+    f enters through epsilon' = (1/f)(5/3-gamma)/(gamma-1), which sets the structure
+    constants c1 and c3 and hence the whole self-similar solution, so those are computed
+    here rather than by the caller.
+
+    Returns Te0 (K), t (the Te power-law index), c1, c3, and a flag indicating whether the
+    solution landed on the boundary of the search interval.
+    """
+
     # derived quantities
-
     gamma = (8.0 + (5.0*beta)) / (6.0 + (3.0*beta))
     epsilon_prime = (1.0/f)*(((5.0/3.0) - gamma) / (gamma - 1.0))
 
     c1 = ((5.0 + (2.0*epsilon_prime)) / (3.0*(alpha**2.0)))*(np.sqrt(1.0 + ((18.0*(alpha**2.0))/((5.0 + (2.0*epsilon_prime))**2.0))) - 1.0)
     c3 = (2.0*(5.0 + (2.0*epsilon_prime)) / (9.0*(alpha**2.0)))*(np.sqrt(1.0 + ((18.0*(alpha**2.0))/((5.0 + (2.0*epsilon_prime))**2.0))) - 1.0)
 
-    ##############################################
-    # required arrays
-
-    r = 10.0**np.linspace(np.log10(rmin),np.log10(rmax),N_r)
-    nu_arr = 10.0**np.linspace(np.log10(numin),np.log10(numax),N_nu)
-
-    ##############################################
     # determine the electron temperature
-
     def electron_energy_balance(Te0):
 
         # solve for Te power-law index
@@ -493,6 +457,130 @@ def SED(nu,m,mdot,verbose_return=False,verbose=True,s=0.5,alpha=0.2,beta=10.0,f=
     # solve for Te power-law index
     t = (1.0 / np.log(rmax))*np.log((6.66e12)*beta*c3/(2.08*Te0*(1.0+beta)))
 
+    return Te0, t, c1, c3, on_boundary
+
+##############################################
+# SED main function
+
+def SED(nu,m,mdot,verbose_return=False,verbose=True,s=0.5,alpha=0.2,beta=10.0,f=1.0,delta=0.3,
+    rmin=3.0,rmax=1000.0,numin=1.0e2,numax=1.0e22,N_Te=100,N_r=30,N_nu=20000,
+    logTe0_lo=8.0,logTe0_hi=12.0,tol_logTe0=1.0e-6,
+    solve_f=False,N_f=100,tol_f=1.0e-4,damp_f=1.0,f_min=1.0e-3):
+    """
+    Compute the SED of an advection-dominated accretion flow (ADAF), following Appendix A
+    of Pesce et al. (2021), which follows Mahadevan (1997, M97) and Narayan & Yi (1995).
+    
+    Inputs:
+    nu: array of frequencies at which to compute the SED, in Hz
+    m: mass of BH, in solar masses
+    mdot: mass accretion rate at r = 1, in units of Mdot_Edd = L_Edd/(eta*c**2), with eta = 0.1
+
+        Note: mdot is not a luminosity ratio.  The flow is radiatively inefficient, so
+        L_bol/L_Edd falls 1-4 orders of magnitude below mdot.  The accretion rate varies
+        with radius as Mdot(r) = mdot*Mdot_Edd*r**s, so the rate at the inner edge is
+        mdot*rmin**s (~ 1.73*mdot for the default rmin = 3, s = 0.5).
+
+    Optional inputs:
+    verbose_return: if True, also return Te0 and the individual SED components
+    verbose: if True, print the converged electron temperature
+    s: power-law index of the radial accretion-rate profile, Mdot ~ r**s
+    alpha: viscosity parameter
+    beta: plasma beta = gas pressure / magnetic pressure.  Note: this differs from M97, whose
+          beta is gas pressure / total pressure; beta_M97 = beta/(1+beta).
+    f: fraction of the viscously dissipated energy that is advected.  NY95 define this as
+       f = 1 - Q^-/Q^+, so f = 1 corresponds to no radiative losses at all; it is a good
+       approximation only at low accretion rates (see solve_f).
+    delta: fraction of the viscous heating deposited directly into the electrons
+    rmin, rmax: inner and outer radii of the flow, in Schwarzschild radii
+    numin, numax: limits of the internal frequency grid, in Hz; requested frequencies
+                  outside this range are returned as zero
+    N_Te: maximum number of bisection iterations for Te0
+    N_r: number of radial grid points
+    N_nu: number of frequency grid points
+    logTe0_lo, logTe0_hi: log10 bounds of the Te0 search, in K
+    tol_logTe0: convergence tolerance of the Te0 search, in dex
+    solve_f: if True, treat the input f as a starting guess and iterate the outer loop
+             f <- 1 - Q^-/Q^+ until it is self-consistent, as NY95 do.  This costs one
+             extra electron-temperature solve per iteration (typically 2-5, up to ~20 near
+             the critical accretion rate) and raises RuntimeError where no advection-
+             dominated solution exists.  Default False, which keeps f fixed at its input.
+    N_f: maximum number of outer iterations when solve_f is True
+    tol_f: convergence tolerance on f when solve_f is True
+    damp_f: damping applied to the f update; 1.0 is undamped (fastest), lower it if the
+            iteration oscillates
+    f_min: value of the implied f at or below which no advection-dominated solution is
+           deemed to exist
+
+    Returns:
+    Lnu: total luminosity density as a function of frequency, in erg/s/Hz
+    nu_p: peak synchrotron frequency, in Hz
+    if verbose_return is set to True, additionally:
+        Te0: Normalization of the electron temperature profile, in K.  The profile is
+             Te(r) = Te0/r**(1-t), so Te0 is its value extrapolated to r = 1, which lies
+             inside rmin; Te0 is hotter than every electron in the flow.  The hottest
+             physical temperature is Te(rmin) = Te0/rmin**(1-t).
+        Lnu_synch, Lnu_compt, Lnu_brems: the individual components, in erg/s/Hz
+        f_implied: the advected fraction implied by the computed radiative losses,
+                   1 - Q^-/Q^+.  The input f should match this for self-consistency;
+                   f = 1 is a good approximation only for mdot << 1e-3.
+    """
+
+    ##############################################
+    # warnings
+
+    if (np.log10(mdot) >= -1.7):
+        warnings.warn('the input accretion rate is larger than the maximum log(mdot) = -1.7, which will yield unphysical results', RuntimeWarning, stacklevel=2)
+    if ((nu < numin).sum() > 0):
+        warnings.warn('the minimum input frequency is smaller than the minimum internally-computed frequency of '+str(numin)+' Hz', RuntimeWarning, stacklevel=2)
+    if ((nu > numax).sum() > 0):
+        warnings.warn('the maximum input frequency is larger than the maximum internally-computed frequency of '+str(numax)+' Hz', RuntimeWarning, stacklevel=2)
+
+    ##############################################
+    # required arrays
+
+    r = 10.0**np.linspace(np.log10(rmin),np.log10(rmax),N_r)
+    nu_arr = 10.0**np.linspace(np.log10(numin),np.log10(numax),N_nu)
+
+    ##############################################
+    # determine the electron temperature, and optionally the advected fraction f
+
+    if not solve_f:
+
+        Te0, t, c1, c3, on_boundary = solve_temperature(nu_arr,r,m,mdot,f,s,alpha,beta,delta,rmin,rmax,N_Te,logTe0_lo,logTe0_hi,tol_logTe0)
+
+    else:
+
+        # NY95 define f as the fraction of the viscously dissipated energy that is advected,
+        # so self-consistency requires f = 1 - Q^-/Q^+.  Solve the fixed point by simple
+        # iteration: each pass re-solves the electron energy balance at the current f, then
+        # updates f from the resulting radiative losses.
+        f_converged = False
+        for _ in range(N_f):
+
+            Te0, t, c1, c3, on_boundary = solve_temperature(nu_arr,r,m,mdot,f,s,alpha,beta,delta,rmin,rmax,N_Te,logTe0_lo,logTe0_hi,tol_logTe0)
+            Qplus, Qminus = compute_powers(nu_arr,r,Te0,t,f,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
+            f_target = 1.0 - (Qminus/Qplus)
+
+            # below this the flow radiates more than viscosity supplies and no
+            # advection-dominated solution exists (this is NY95's critical accretion rate)
+            if f_target <= f_min:
+                raise RuntimeError('No self-consistent advected fraction: the implied f = '
+                                   +str(np.round(f_target,3))+' has fallen to or below f_min = '
+                                   +str(f_min)+', so the accretion rate is above the critical '
+                                   'value for an advection-dominated solution.')
+
+            # Te0 was solved at this f, so if f already reproduces itself we are done
+            if np.abs(f_target - f) <= tol_f:
+                f_converged = True
+                break
+
+            f = ((1.0 - damp_f)*f) + (damp_f*min(f_target,1.0))
+
+        if not f_converged:
+            warnings.warn('the self-consistent solve for f did not converge to within tol_f = '
+                          +str(tol_f)+' in N_f = '+str(N_f)+' iterations; the returned f is '
+                          +str(np.round(f,4)), RuntimeWarning, stacklevel=2)
+
     # print out the solved-for temperature
     if verbose:
         print('Electron temperature normalization is '+str(np.round(Te0/(1.0e9),2))+' GK at r = 1; '
@@ -507,13 +595,7 @@ def SED(nu,m,mdot,verbose_return=False,verbose=True,s=0.5,alpha=0.2,beta=10.0,f=
 
     # Recompute the implied value of f and warn if it is badly violated;
     # f = 1 is the low-accretion-rate approximation
-    if s == 1:
-        Qplus_final = (9.430e38)*(f**(-1.0))*((1.0+beta)**(-1.0))*c3*m*mdot*np.log(rmax/rmin)
-    else:
-        Qplus_final = (9.430e38)*(f**(-1.0))*((1.0+beta)**(-1.0))*c3*m*mdot*((1.0-s)**(-1.0))*((rmin**(-1.0+s)) - (rmax**(-1.0+s)))
-    Qminus_final = (compute_synch_power(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
-                    + compute_compt_power(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
-                    + compute_brems_power(r,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3))
+    Qplus_final, Qminus_final = compute_powers(nu_arr,r,Te0,t,f,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
     f_implied = 1.0 - (Qminus_final/Qplus_final)
     if f_implied <= 0.0:
         warnings.warn('the flow radiates more energy than viscosity dissipates (implied '

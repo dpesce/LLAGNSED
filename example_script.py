@@ -18,7 +18,8 @@ from SEDmodel import SED
 # generate SED
 
 nu = 10.0**np.linspace(np.log10(nu_min),np.log10(nu_max),1000)
-Lnu, nu_p, Te0, Lnu_synch, Lnu_compt, Lnu_brems = SED(nu,m,mdot,verbose_return=True)
+Lnu, nu_p, Te0, Lnu_synch, Lnu_compt, Lnu_brems, f_implied = SED(nu,m,mdot,verbose_return=True,solve_f=True)
+print('Self-consistent advected fraction: f = '+str(np.round(f_implied,4)))
 
 #####################################
 # plot SED
