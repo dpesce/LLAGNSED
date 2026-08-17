@@ -195,7 +195,7 @@ def compute_compt_spectrum(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3,nu_p
 
     # construct Compton spectrum, adding exponential cutoffs at nu_p and nu_f
     with np.errstate(over='ignore'):
-        log_Lnu_compt = (np.log(L_p) - (alpha_c*np.log(nu_arr/nu_p))
+        log_Lnu_compt = (np.log(L_p) - (alpha_c*np.log(np.maximum(nu_arr,nu_p)/nu_p))
                          - ((nu_arr/(0.5*nu_f))**2.0)      # exponential cutoff at nu_f
                          - ((nu_arr/(1.0*nu_p))**-4.0))    # exponential cutoff at nu_p
         Lnu_compt = np.exp(log_Lnu_compt)
