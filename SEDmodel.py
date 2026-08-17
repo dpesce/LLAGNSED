@@ -35,6 +35,25 @@ def relMax(xM):
     return (4.0505/(xM**(1.0/6.0)))*(1.0 + (0.40/(xM**(1.0/4.0))) + (0.5316/(xM**(1.0/2.0))))*np.exp(-1.8899*(xM**(1.0/3.0)))
 
 ##############################################
+# electron temperature profile
+
+def Te_profile(r,Te0,t,req,K):
+    """
+    Piecewise electron temperature profile.  Inside req the flow is two-temperature and
+    Te = Te0 * r**(-(1-t)); at and beyond req the electrons are locked to the ions,
+    Te = Ti = K/r, where K = 6.66e12 K * beta * c3 / (2.08 (1+beta)) is the common
+    temperature normalization (NY95 eq. 2.16 with Ti = Te).  Continuous at req by
+    construction of t.
+    """
+    r = np.asarray(r, dtype=float)
+    return np.where(r <= req, Te0/(r**(1.0-t)), K/r)
+
+def Ti_profile(r,Te,beta,c3):
+    """Ion temperature from NY95 eq. (2.16): Ti + 1.08 Te = 6.66e12 K * beta c3/((1+beta) r)."""
+    r = np.asarray(r, dtype=float)
+    return ((6.66e12)*((1.0+beta)**(-1.0))*beta*c3*(r**(-1.0))) - (1.08*Te)
+
+##############################################
 # synchrotron functions
 
 def find_critical_freq(nu_arr,volume,surface,n_bisect=10):
@@ -91,21 +110,19 @@ def find_critical_freq(nu_arr,volume,surface,n_bisect=10):
 
     return nu_crit, Lnu_crit
 
-def synch_branches(nu_arr,Te0,t,r_eval,m,mdot,s,alpha,beta,c1,c3):
+def synch_branches(nu_arr,Te_eval,r_eval,m,mdot,s,alpha,beta,c1,c3):
     """
     Optically-thin ("volume") and optically-thick ("surface") synchrotron luminosity
-    densities at a single radius r_eval.  Their intersection defines the critical frequency
-    nu_c(r_eval) below which the synchrotron emission is self-absorbed.  Both branches use
-    the same uniform-sphere convention (NY95 eq. 3.13 / M97 eq. 19): the volume branch is
-    the emissivity times the volume of a sphere of radius R_eval, and the surface branch is
-    Rayleigh-Jeans emission from the surface of that same sphere.
+    densities at a single radius r_eval where the electron temperature is Te_eval.  Their
+    intersection defines the critical frequency nu_c(r_eval) below which the synchrotron
+    emission is self-absorbed.  Both branches use the same uniform-sphere convention
+    (NY95 eq. 3.13 / M97 eq. 19): the volume branch is the emissivity times the volume of
+    a sphere of radius R_eval, and the surface branch is Rayleigh-Jeans emission from the
+    surface of that same sphere.
     """
 
-    # Te at this radius
-    Te = Te0 / (r_eval**(1.0-t))
-
     # dimensionless temperature
-    theta_e = (1.68637e-10)*Te
+    theta_e = (1.68637e-10)*Te_eval
 
     # gyro frequency
     nu_b = (3.998e15)*((1+beta)**(-1.0/2.0))*(alpha**(-1.0/2.0))*(c1**(-1.0/2.0))*(c3**(1.0/2.0))*(m**(-1.0/2.0))*(mdot**(1.0/2.0))*(r_eval**((-5.0/4.0) + (s/2.0)))
@@ -115,25 +132,28 @@ def synch_branches(nu_arr,Te0,t,r_eval,m,mdot,s,alpha,beta,c1,c3):
 
     # optically-thin and optically-thick branches
     volume = (1.896e8)*(relMax(xM)/kn(2,1.0/theta_e))*(alpha**(-1.0))*(c1**(-1.0))*(m**2.0)*mdot*nu_arr*(r_eval**((3.0/2.0) + s))
-    surface = (1.058e-24)*(nu_arr**2.0)*Te0*(m**2.0)*(r_eval**(1.0+t))
+    surface = (1.058e-24)*(nu_arr**2.0)*Te_eval*(m**2.0)*(r_eval**2.0)
 
     return volume, surface
+
+def compute_crit_freq(nu_arr,Te_eval,r_eval,m,mdot,s,alpha,beta,c1,c3):
+    """Critical (self-absorption) frequency and luminosity density at radius r_eval."""
+
+    volume, surface = synch_branches(nu_arr,Te_eval,r_eval,m,mdot,s,alpha,beta,c1,c3)
+    nu_c, L_c = find_critical_freq(nu_arr,volume,surface)
+
+    return nu_c, L_c
 
 def compute_peak_freq(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
 
     # the peak frequency is the critical frequency at the innermost radius
-    volume, surface = synch_branches(nu_arr,Te0,t,rmin,m,mdot,s,alpha,beta,c1,c3)
-    nu_p, L_p = find_critical_freq(nu_arr,volume,surface)
-
-    return nu_p, L_p
+    return compute_crit_freq(nu_arr,Te0/(rmin**(1.0-t)),rmin,m,mdot,s,alpha,beta,c1,c3)
 
 def compute_min_freq(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
 
-    # the minimum frequency is the critical frequency at the outermost radius
-    volume, surface = synch_branches(nu_arr,Te0,t,rmax,m,mdot,s,alpha,beta,c1,c3)
-    nu_min, Lnu_min = find_critical_freq(nu_arr,volume,surface)
-
-    return nu_min, Lnu_min
+    # the minimum frequency is the critical frequency at the outer edge of the
+    # two-temperature zone (rmax here), evaluated on the inner temperature profile
+    return compute_crit_freq(nu_arr,Te0/(rmax**(1.0-t)),rmax,m,mdot,s,alpha,beta,c1,c3)
 
 def compute_synch_power(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
 
@@ -147,7 +167,16 @@ def compute_synch_power(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
 
     return P_synch
 
-def compute_synch_spectrum(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3,nu_p,L_p,nu_min,Lnu_min):
+def compute_synch_spectrum(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3,nu_p,L_p,nu_min,Lnu_min,nu_eq=None,Lnu_eq=None):
+    """
+    Piecewise synchrotron spectrum (P21 eq. A18): Rayleigh-Jeans below nu_min, a power law
+    connecting the critical points, and the optically-thin emissivity at rmin above nu_p.
+
+    If (nu_eq, Lnu_eq) is given, the flow has an outer one-temperature zone: nu_min is then
+    the critical frequency at the outer edge of the flow and nu_eq the critical frequency
+    at the outer edge of the two-temperature zone, and the power law is broken at nu_eq
+    (M97 sec. 4.1: the one-temperature zone with Te ~ 1/r gives a steeper radio slope).
+    """
 
     # construct synchrotron spetrum
     Lnu_synch = np.zeros_like(nu_arr)
@@ -159,13 +188,28 @@ def compute_synch_spectrum(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3,nu_p
     # synchrotron emission above nu_p is Maxwellian
     index = (nu_arr >= nu_p)
 
-    volume, surface = synch_branches(nu_arr,Te0,t,rmin,m,mdot,s,alpha,beta,c1,c3)
+    volume, surface = synch_branches(nu_arr,Te0/(rmin**(1.0-t)),rmin,m,mdot,s,alpha,beta,c1,c3)
     Lnu_synch[index] = volume[index]
 
-    # synchrotron emission bewteen nu_min and nu_p is a power-law
-    pl_exp = np.log(L_p/Lnu_min) / np.log(nu_p/nu_min)
-    index = ((nu_arr > nu_min) & (nu_arr < nu_p))
-    Lnu_synch[index] = Lnu_min*((nu_arr[index]/nu_min)**pl_exp)
+    if nu_eq is None:
+
+        # single power law between nu_min and nu_p, connecting the two critical points
+        # exactly (P21 eq. A18)
+        pl_exp = np.log(L_p/Lnu_min) / np.log(nu_p/nu_min)
+        index = ((nu_arr > nu_min) & (nu_arr < nu_p))
+        Lnu_synch[index] = Lnu_min*((nu_arr[index]/nu_min)**pl_exp)
+
+    else:
+
+        # outer (one-temperature) zone: nu_min -> nu_eq
+        pl_exp_out = np.log(Lnu_eq/Lnu_min) / np.log(nu_eq/nu_min)
+        index = ((nu_arr > nu_min) & (nu_arr < nu_eq))
+        Lnu_synch[index] = Lnu_min*((nu_arr[index]/nu_min)**pl_exp_out)
+
+        # inner (two-temperature) zone: nu_eq -> nu_p
+        pl_exp_in = np.log(L_p/Lnu_eq) / np.log(nu_p/nu_eq)
+        index = ((nu_arr >= nu_eq) & (nu_arr < nu_p))
+        Lnu_synch[index] = Lnu_eq*((nu_arr[index]/nu_eq)**pl_exp_in)
 
     return Lnu_synch
 
@@ -258,10 +302,9 @@ def bremsF(theta_e):
         return np.squeeze(F)
     return F
 
-def compute_brems_power(r,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
-
-    # Te radial profile
-    Te = Te0 / (r**(1.0-t))
+def compute_brems_power(r,Te,m,mdot,s,alpha,c1):
+    """Volume-integrated bremsstrahlung power (P21 eq. A22) on the radial grid r with
+    electron temperature profile Te (same shape as r)."""
 
     # dimensionless temperature
     theta_e = (1.68637e-10)*Te
@@ -272,31 +315,64 @@ def compute_brems_power(r,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
 
     return P_brems
 
-def compute_brems_spectrum(nu_arr,r,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
-
-    # Te radial profile
-    Te = Te0 / (r**(1.0-t))
+def compute_brems_spectrum(nu_arr,r,Te,m,mdot,s,alpha,c1):
+    """Bremsstrahlung spectrum (P21 eq. A23, with the r-exponent written in terms of the
+    local Te so that any temperature profile can be used) on the radial grid r."""
 
     # dimensionless temperature
     theta_e = (1.68637e-10)*Te
 
-    # intialize array
-    Lnu_brems = np.zeros_like(nu_arr)
-    
-    # integrate over radius at each frequency
-    pref = (2.292e24)*(alpha**(-2.0))*(c1**(-2.0))*m*(mdot**2.0)*(Te0**(-1.0))*bremsF(theta_e)*(r**((2.0*s) - t))
+    # radial part is frequency-independent, so pull it out of the frequency loop; the
+    # 1/Te factor normalizes the flat-plus-exponential spectral shape to q_brems
+    pref = (2.292e24)*(alpha**(-2.0))*(c1**(-2.0))*m*(mdot**2.0)*bremsF(theta_e)*(Te**(-1.0))*(r**(-1.0 + (2.0*s)))
     integrand = pref[None,:]*np.exp(-(4.799e-11)*(nu_arr[:,None]/Te[None,:]))
     Lnu_brems = np.sum(0.5*(integrand[:,1:] + integrand[:,0:-1])*(r[1:] - r[0:-1])[None,:], axis=1)
 
     return Lnu_brems
 
 ##############################################
+# full-flow synchrotron spectrum
+
+def assemble_synch_spectrum(nu_arr,Te0,t,rmin,rmax,req,m,mdot,s,alpha,beta,c1,c3,T_synch_min=1.0e8):
+    """
+    Synchrotron spectrum of the whole flow.  The two-temperature zone [rmin, r_bal] with
+    r_bal = min(req, rmax) supplies the peak (rmin) and the inner critical point (r_bal).
+    If the flow extends beyond req, the one-temperature zone [req, rmax] with Te = K/r
+    adds a further, lower critical point at its outer edge, and the radio spectrum is a
+    broken power law.  Following M97 (sec. 4.1) the outer anchor is placed no further out
+    than where Te falls to T_synch_min, below which the thermal synchrotron formulae are
+    not meaningful.
+
+    Returns (Lnu_synch, nu_p, L_p, nu_bal, L_bal, nu_min, L_min); the last two equal the
+    middle two when there is no outer zone.
+    """
+
+    K = (6.66e12)*beta*c3/(2.08*(1.0+beta))
+    r_bal = min(req,rmax)
+
+    nu_p, L_p = compute_peak_freq(nu_arr,Te0,t,rmin,r_bal,m,mdot,s,alpha,beta,c1,c3)
+    nu_bal, L_bal = compute_min_freq(nu_arr,Te0,t,rmin,r_bal,m,mdot,s,alpha,beta,c1,c3)
+
+    if req < rmax:
+        # outer one-temperature zone: anchor at its outer edge (capped where Te = T_synch_min)
+        r_syn = min(rmax, K/T_synch_min)
+        if r_syn > req:
+            nu_min, L_min = compute_crit_freq(nu_arr,K/r_syn,r_syn,m,mdot,s,alpha,beta,c1,c3)
+            Lnu = compute_synch_spectrum(nu_arr,Te0,t,rmin,r_bal,m,mdot,s,alpha,beta,c1,c3,nu_p,L_p,nu_min,L_min,nu_eq=nu_bal,Lnu_eq=L_bal)
+            return Lnu, nu_p, L_p, nu_bal, L_bal, nu_min, L_min
+
+    Lnu = compute_synch_spectrum(nu_arr,Te0,t,rmin,r_bal,m,mdot,s,alpha,beta,c1,c3,nu_p,L_p,nu_bal,L_bal)
+    return Lnu, nu_p, L_p, nu_bal, L_bal, nu_bal, L_bal
+
+##############################################
 # integrated power budget
 
-def compute_powers(nu_arr,r,Te0,t,f,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
+def compute_powers(nu_arr,r,Te,Te0,t,f,rmin,rmax,req,m,mdot,s,alpha,beta,c1,c3,T_synch_min=1.0e8):
     """
-    Total viscous dissipation Q+ (P21 eq. A10) and total radiated power Q- (P21 eq. A2).
-    NY95 define the advected fraction as f = 1 - Q-/Q+.
+    Total viscous dissipation Q+ (P21 eq. A10) over the whole flow [rmin, rmax], and total
+    radiated power Q- (P21 eq. A2) including any outer one-temperature zone.  NY95 define
+    the advected fraction as f = 1 - Q-/Q+.  r and Te are the full radial grid and the
+    piecewise temperature profile on it.
     """
 
     if s == 1:
@@ -304,16 +380,19 @@ def compute_powers(nu_arr,r,Te0,t,f,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
     else:
         Qplus = (9.430e38)*(f**(-1.0))*((1.0+beta)**(-1.0))*c3*m*mdot*((1.0-s)**(-1.0))*((rmin**(-1.0+s)) - (rmax**(-1.0+s)))
 
-    Qminus = (compute_synch_power(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
+    Lnu_synch = assemble_synch_spectrum(nu_arr,Te0,t,rmin,rmax,req,m,mdot,s,alpha,beta,c1,c3,T_synch_min)[0]
+    P_synch = np.sum(0.5*(Lnu_synch[1:] + Lnu_synch[0:-1])*(nu_arr[1:] - nu_arr[0:-1]))
+
+    Qminus = (P_synch
               + compute_compt_power(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
-              + compute_brems_power(r,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3))
+              + compute_brems_power(r,Te,m,mdot,s,alpha,c1))
 
     return Qplus, Qminus
 
 ##############################################
 # electron temperature solver
 
-def solve_temperature(nu_arr,r,m,mdot,f,s,alpha,beta,delta,rmin,rmax,N_Te,logTe0_lo,logTe0_hi,tol_logTe0):
+def solve_temperature(nu_arr,r,m,mdot,f,s,alpha,beta,delta,rmin,rmax,req,N_Te,logTe0_lo,logTe0_hi,tol_logTe0):
     """
     Solve the electron energy balance (P21 eq. A1) for the electron temperature
     normalization Te0, at a fixed advected fraction f.
@@ -324,6 +403,10 @@ def solve_temperature(nu_arr,r,m,mdot,f,s,alpha,beta,delta,rmin,rmax,N_Te,logTe0
 
     Returns Te0 (K), t (the Te power-law index), c1, c3, and a flag indicating whether the
     solution landed on the boundary of the search interval.
+
+    The balance is a statement about the two-temperature zone, so all integrals run over
+    the grid r, which must span [rmin, min(req, rmax)]; rmax here is the outer edge of that
+    zone (i.e. the caller passes min(req, rmax)), while req sets the temperature index t.
     """
 
     # derived quantities
@@ -336,8 +419,8 @@ def solve_temperature(nu_arr,r,m,mdot,f,s,alpha,beta,delta,rmin,rmax,N_Te,logTe0
     # determine the electron temperature
     def electron_energy_balance(Te0):
 
-        # solve for Te power-law index
-        t = (1.0 / np.log(rmax))*np.log((6.66e12)*beta*c3/(2.08*Te0*(1.0+beta)))
+        # solve for Te power-law index from the requirement Te(req) = Ti(req)
+        t = (1.0 / np.log(req))*np.log((6.66e12)*beta*c3/(2.08*Te0*(1.0+beta)))
 
         # electron number density radial profile
         ne = (3.158e19)*(alpha**-1.0)*(c1**-1.0)*(m**-1.0)*mdot*(r**((-3.0/2.0) + s))
@@ -385,7 +468,7 @@ def solve_temperature(nu_arr,r,m,mdot,f,s,alpha,beta,delta,rmin,rmax,N_Te,logTe0
         P_compt = compute_compt_power(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
 
         # bremsstrahlung emission
-        P_brems = compute_brems_power(r,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
+        P_brems = compute_brems_power(r,Te,m,mdot,s,alpha,c1)
 
         # total electron heating and cooling
         heating = Qie + (delta*Qplus)
@@ -395,7 +478,7 @@ def solve_temperature(nu_arr,r,m,mdot,f,s,alpha,beta,delta,rmin,rmax,N_Te,logTe0
 
     # physically allowed Te0 interval
     Te0_t0 = (6.66e12)*beta*c3/(2.08*(1.0+beta))
-    Te0_t1 = Te0_t0/rmax
+    Te0_t1 = Te0_t0/req
 
     # boundaries of search space in log10(Te0)
     Te0_lo = max(10.0**logTe0_lo, Te0_t1)
@@ -455,7 +538,7 @@ def solve_temperature(nu_arr,r,m,mdot,f,s,alpha,beta,delta,rmin,rmax,N_Te,logTe0
         Te0 = 10.0**(0.5*(logTe0_lo + logTe0_hi))
 
     # solve for Te power-law index
-    t = (1.0 / np.log(rmax))*np.log((6.66e12)*beta*c3/(2.08*Te0*(1.0+beta)))
+    t = (1.0 / np.log(req))*np.log((6.66e12)*beta*c3/(2.08*Te0*(1.0+beta)))
 
     return Te0, t, c1, c3, on_boundary
 
@@ -463,12 +546,12 @@ def solve_temperature(nu_arr,r,m,mdot,f,s,alpha,beta,delta,rmin,rmax,N_Te,logTe0
 # SED main function
 
 def SED(nu,m,mdot,verbose_return=False,verbose=True,s=0.5,alpha=0.2,beta=10.0,f=1.0,delta=0.3,
-    rmin=3.0,rmax=1000.0,numin=1.0e2,numax=1.0e22,N_Te=100,N_r=30,N_nu=20000,
-    logTe0_lo=8.0,logTe0_hi=12.0,tol_logTe0=1.0e-6,
+    rmin=3.0,rmax=1.0e5,req=1.0e3,T_synch_min=1.0e8,numin=1.0e2,numax=1.0e22,
+    N_Te=100,N_r=30,N_nu=20000,logTe0_lo=8.0,logTe0_hi=12.0,tol_logTe0=1.0e-6,
     solve_f=False,N_f=100,tol_f=1.0e-4,damp_f=1.0,f_min=1.0e-3):
     """
     Compute the SED of an advection-dominated accretion flow (ADAF), following Appendix A
-    of Pesce et al. (2021), which follows Mahadevan (1997, M97) and Narayan & Yi (1995).
+    of Pesce et al. (2021), which follows Mahadevan (1997, M97) and Narayan & Yi (1995, NY95).
     
     Inputs:
     nu: array of frequencies at which to compute the SED, in Hz
@@ -492,6 +575,19 @@ def SED(nu,m,mdot,verbose_return=False,verbose=True,s=0.5,alpha=0.2,beta=10.0,f=
        approximation only at low accretion rates (see solve_f).
     delta: fraction of the viscous heating deposited directly into the electrons
     rmin, rmax: inner and outer radii of the flow, in Schwarzschild radii
+    req: radius at which the ion and electron temperatures become equal, in Schwarzschild
+         radii.  Inside req the flow is two-temperature with Te = Te0 r**(-(1-t)); at and
+         beyond req the electrons are locked to the ions, Te = Ti ~ 1/r.  Defaults to 1000,
+         the NY95/M97 value, independently of rmax; pass req=None to tie it to rmax instead
+         (which reproduces the P21 model for any rmax).  req < rmax adds an outer one-
+         temperature zone whose emission (mainly bremsstrahlung, plus the low-frequency
+         synchrotron tail) is included in the SED but, being powered by the ions, not in the
+         electron energy balance that fixes Te0.  req > rmax is allowed and describes a flow
+         that is truncated before the temperatures equilibrate.
+    T_synch_min: electron temperature below which thermal synchrotron emission is not
+         counted, in K.  Only relevant when req < rmax: the outer one-temperature zone
+         has Te = K/r, and following M97 (sec. 4.1) the outer synchrotron anchor is placed
+         no further out than where Te falls to this value.
     numin, numax: limits of the internal frequency grid, in Hz; requested frequencies
                   outside this range are returned as zero
     N_Te: maximum number of bisection iterations for Te0
@@ -536,9 +632,26 @@ def SED(nu,m,mdot,verbose_return=False,verbose=True,s=0.5,alpha=0.2,beta=10.0,f=
         warnings.warn('the maximum input frequency is larger than the maximum internally-computed frequency of '+str(numax)+' Hz', RuntimeWarning, stacklevel=2)
 
     ##############################################
+    # radii
+
+    if req is None:
+        req = rmax
+    if req <= rmin:
+        raise RuntimeError('req must exceed rmin: the two-temperature zone would be empty.')
+
+    # outer edge of the two-temperature zone, over which the electron balance is solved
+    r_bal = min(req,rmax)
+
+    ##############################################
     # required arrays
 
-    r = 10.0**np.linspace(np.log10(rmin),np.log10(rmax),N_r)
+    r = 10.0**np.linspace(np.log10(rmin),np.log10(r_bal),N_r)
+    if req < rmax:
+        # outer one-temperature zone; req is duplicated at the join, which the trapezoid
+        # rule handles as a zero-width interval
+        r_full = np.concatenate([r, 10.0**np.linspace(np.log10(req),np.log10(rmax),N_r)])
+    else:
+        r_full = r
     nu_arr = 10.0**np.linspace(np.log10(numin),np.log10(numax),N_nu)
 
     ##############################################
@@ -546,7 +659,7 @@ def SED(nu,m,mdot,verbose_return=False,verbose=True,s=0.5,alpha=0.2,beta=10.0,f=
 
     if not solve_f:
 
-        Te0, t, c1, c3, on_boundary = solve_temperature(nu_arr,r,m,mdot,f,s,alpha,beta,delta,rmin,rmax,N_Te,logTe0_lo,logTe0_hi,tol_logTe0)
+        Te0, t, c1, c3, on_boundary = solve_temperature(nu_arr,r,m,mdot,f,s,alpha,beta,delta,rmin,r_bal,req,N_Te,logTe0_lo,logTe0_hi,tol_logTe0)
 
     else:
 
@@ -557,8 +670,9 @@ def SED(nu,m,mdot,verbose_return=False,verbose=True,s=0.5,alpha=0.2,beta=10.0,f=
         f_converged = False
         for _ in range(N_f):
 
-            Te0, t, c1, c3, on_boundary = solve_temperature(nu_arr,r,m,mdot,f,s,alpha,beta,delta,rmin,rmax,N_Te,logTe0_lo,logTe0_hi,tol_logTe0)
-            Qplus, Qminus = compute_powers(nu_arr,r,Te0,t,f,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
+            Te0, t, c1, c3, on_boundary = solve_temperature(nu_arr,r,m,mdot,f,s,alpha,beta,delta,rmin,r_bal,req,N_Te,logTe0_lo,logTe0_hi,tol_logTe0)
+            K = (6.66e12)*beta*c3/(2.08*(1.0+beta))
+            Qplus, Qminus = compute_powers(nu_arr,r_full,Te_profile(r_full,Te0,t,req,K),Te0,t,f,rmin,rmax,req,m,mdot,s,alpha,beta,c1,c3,T_synch_min)
             f_target = 1.0 - (Qminus/Qplus)
 
             # below this the flow radiates more than viscosity supplies and no
@@ -595,7 +709,9 @@ def SED(nu,m,mdot,verbose_return=False,verbose=True,s=0.5,alpha=0.2,beta=10.0,f=
 
     # Recompute the implied value of f and warn if it is badly violated;
     # f = 1 is the low-accretion-rate approximation
-    Qplus_final, Qminus_final = compute_powers(nu_arr,r,Te0,t,f,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
+    K = (6.66e12)*beta*c3/(2.08*(1.0+beta))
+    Te_full = Te_profile(r_full,Te0,t,req,K)
+    Qplus_final, Qminus_final = compute_powers(nu_arr,r_full,Te_full,Te0,t,f,rmin,rmax,req,m,mdot,s,alpha,beta,c1,c3,T_synch_min)
     f_implied = 1.0 - (Qminus_final/Qplus_final)
     if f_implied <= 0.0:
         warnings.warn('the flow radiates more energy than viscosity dissipates (implied '
@@ -613,8 +729,7 @@ def SED(nu,m,mdot,verbose_return=False,verbose=True,s=0.5,alpha=0.2,beta=10.0,f=
     # construct the spectrum
 
     # determine critical synchrotron frequencies and luminosities
-    nu_p, L_p = compute_peak_freq(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
-    nu_min, Lnu_min = compute_min_freq(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
+    Lnu_synch_full, nu_p, L_p, nu_bal, L_bal, nu_min, Lnu_min = assemble_synch_spectrum(nu_arr,Te0,t,rmin,rmax,req,m,mdot,s,alpha,beta,c1,c3,T_synch_min)
 
     # the component arrays contain exact zeros, whose log10 is -inf; that is intended
     # (10**-inf = 0), so silence only the divide warning it raises, and only here
@@ -622,7 +737,6 @@ def SED(nu,m,mdot,verbose_return=False,verbose=True,s=0.5,alpha=0.2,beta=10.0,f=
     errstate_ctx.__enter__()
 
     # synchrotron emission
-    Lnu_synch_full = compute_synch_spectrum(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3,nu_p,L_p,nu_min,Lnu_min)
     synch_interpolator = interpolate.interp1d(np.log10(nu_arr), np.log10(Lnu_synch_full),kind='linear',bounds_error=False,fill_value=-np.inf)
     Lnu_synch = 10.0**synch_interpolator(np.log10(nu))
 
@@ -632,7 +746,7 @@ def SED(nu,m,mdot,verbose_return=False,verbose=True,s=0.5,alpha=0.2,beta=10.0,f=
     Lnu_compt = 10.0**compt_interpolator(np.log10(nu))
 
     # bremsstrahlung emission
-    Lnu_brems_full = compute_brems_spectrum(nu_arr,r,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
+    Lnu_brems_full = compute_brems_spectrum(nu_arr,r_full,Te_full,m,mdot,s,alpha,c1)
     brems_interpolator = interpolate.interp1d(np.log10(nu_arr), np.log10(Lnu_brems_full),kind='linear',bounds_error=False,fill_value=-np.inf)
     Lnu_brems = 10.0**brems_interpolator(np.log10(nu))
 
