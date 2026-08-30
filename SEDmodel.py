@@ -144,22 +144,48 @@ def compute_crit_freq(nu_arr,Te_eval,r_eval,m,mdot,s,alpha,beta,c1,c3):
 
     return nu_c, L_c
 
-def compute_peak_freq(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
+def compute_peak_freq(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3,T_synch_min=1.0e8):
+
+    # if even the hottest gas in the zone is cooler than T_synch_min, the thermal
+    # synchrotron formulae do not apply anywhere in it
+    if (Te0/(rmin**(1.0-t))) < T_synch_min:
+        return 0.0, 0.0
 
     # the peak frequency is the critical frequency at the innermost radius
     return compute_crit_freq(nu_arr,Te0/(rmin**(1.0-t)),rmin,m,mdot,s,alpha,beta,c1,c3)
 
-def compute_min_freq(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
+def compute_min_freq(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3,T_synch_min=1.0e8):
+
+    # if even the hottest gas in the zone is cooler than T_synch_min, the thermal
+    # synchrotron formulae do not apply anywhere in it
+    if (Te0/(rmin**(1.0-t))) < T_synch_min:
+        return 0.0, 0.0
+
+    # The outer synchrotron anchor is placed no further out than where the temperature
+    # profile falls to T_synch_min; this keeps the anchor inside the validity range of
+    # the thermal synchrotron formulae during the Te0 search, where trial profiles can
+    # be very cold.  When this branch is reached, t < 1 is guaranteed; t = 1 makes the
+    # profile flat, and the zone-top check above has already passed.
+    if (Te0/(rmax**(1.0-t))) < T_synch_min:
+        r_anchor = (Te0/T_synch_min)**(1.0/(1.0-t))
+    else:
+        r_anchor = rmax
 
     # the minimum frequency is the critical frequency at the outer edge of the
-    # two-temperature zone (rmax here), evaluated on the inner temperature profile
-    return compute_crit_freq(nu_arr,Te0/(rmax**(1.0-t)),rmax,m,mdot,s,alpha,beta,c1,c3)
+    # two-temperature zone (rmax here, capped to r_anchor), evaluated on the inner
+    # temperature profile
+    return compute_crit_freq(nu_arr,Te0/(r_anchor**(1.0-t)),r_anchor,m,mdot,s,alpha,beta,c1,c3)
 
-def compute_synch_power(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
+def compute_synch_power(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3,T_synch_min=1.0e8):
 
     # critical frequencies at the inner and outer edges
-    nu_p, L_p = compute_peak_freq(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
-    nu_min, Lnu_min = compute_min_freq(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
+    nu_p, L_p = compute_peak_freq(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3,T_synch_min)
+
+    # no synchrotron if the whole zone is below the validity floor
+    if L_p <= 0.0:
+        return 0.0
+
+    nu_min, Lnu_min = compute_min_freq(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3,T_synch_min)
 
     # integrate the spectrum
     Lnu_synch = compute_synch_spectrum(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3,nu_p,L_p,nu_min,Lnu_min)
@@ -246,7 +272,7 @@ def compute_compt_spectrum(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3,nu_p
 
     return Lnu_compt
 
-def compute_compt_power(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
+def compute_compt_power(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3,T_synch_min=1.0e8):
 
     # optical depth to electron scattering
     tau_es = 6.205*(alpha**(-1.0))*(c1**(-1.0))*mdot*rmin**(-(1.0/2.0) + s)
@@ -267,7 +293,11 @@ def compute_compt_power(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3):
     nu_f = (6.251e10)*Te_rmin
 
     # get peak synchrotron frequency
-    nu_p, L_p = compute_peak_freq(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
+    nu_p, L_p = compute_peak_freq(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3,T_synch_min)
+
+    # no Comptonization without synchrotron seed photons
+    if L_p <= 0.0:
+        return 0.0
 
     # compute total power
     Lnu_compt = compute_compt_spectrum(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3,nu_p,L_p)
@@ -369,8 +399,17 @@ def assemble_synch_spectrum(nu_arr,Te0,t,rmin,rmax,req,m,mdot,s,alpha,beta,c1,c3
         Lnu = compute_synch_spectrum(nu_arr,K,0.0,rmin,r_syn,m,mdot,s,alpha,beta,c1,c3,nu_p,L_p,nu_min,L_min)
         return Lnu, nu_p, L_p, nu_p, L_p, nu_min, L_min
 
-    nu_p, L_p = compute_peak_freq(nu_arr,Te0,t,rmin,r_bal,m,mdot,s,alpha,beta,c1,c3)
-    nu_bal, L_bal = compute_min_freq(nu_arr,Te0,t,rmin,r_bal,m,mdot,s,alpha,beta,c1,c3)
+    nu_p, L_p = compute_peak_freq(nu_arr,Te0,t,rmin,r_bal,m,mdot,s,alpha,beta,c1,c3,T_synch_min)
+    nu_bal, L_bal = compute_min_freq(nu_arr,Te0,t,rmin,r_bal,m,mdot,s,alpha,beta,c1,c3,T_synch_min)
+
+    # if even the innermost gas is below T_synch_min then there is no thermal synchrotron
+    # (and no Compton seed photons) anywhere in the flow
+    if L_p <= 0.0:
+        warnings.warn('the entire two-temperature zone is cooler than T_synch_min = '+str(T_synch_min)
+                      +' K; thermal synchrotron emission (and its Comptonization) is omitted',
+                      RuntimeWarning, stacklevel=2)
+        zeros = np.zeros_like(nu_arr)
+        return zeros, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
 
     if req < rmax:
         # outer one-temperature zone: anchor at its outer edge (capped where Te = T_synch_min)
@@ -409,7 +448,7 @@ def compute_powers(nu_arr,r,Te,Te0,t,f,rmin,rmax,req,m,mdot,s,alpha,beta,c1,c3,T
     if (req <= rmin) and ((Te0/(rmin**(1.0-t))) < T_synch_min):
         P_compt = 0.0
     else:
-        P_compt = compute_compt_power(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
+        P_compt = compute_compt_power(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3,T_synch_min)
 
     Qminus = (P_synch + P_compt
               + compute_brems_power(r,Te,m,mdot,s,alpha,c1))
@@ -419,7 +458,7 @@ def compute_powers(nu_arr,r,Te,Te0,t,f,rmin,rmax,req,m,mdot,s,alpha,beta,c1,c3,T
 ##############################################
 # electron temperature solver
 
-def solve_temperature(nu_arr,r,m,mdot,f,s,alpha,beta,lambda_w,delta,rmin,rmax,req,N_Te,logTe0_lo,logTe0_hi,tol_logTe0):
+def solve_temperature(nu_arr,r,m,mdot,f,s,alpha,beta,lambda_w,delta,rmin,rmax,req,T_synch_min,N_Te,logTe0_lo,logTe0_hi,tol_logTe0):
     """
     Solve the electron energy balance (P21 eq. A1) for the electron temperature
     normalization Te0, at a fixed advected fraction f.
@@ -515,10 +554,10 @@ def solve_temperature(nu_arr,r,m,mdot,f,s,alpha,beta,lambda_w,delta,rmin,rmax,re
             Qadve = 0.0
 
         # synchrotron emission
-        P_synch = compute_synch_power(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
+        P_synch = compute_synch_power(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3,T_synch_min)
 
         # inverse Compton emission
-        P_compt = compute_compt_power(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
+        P_compt = compute_compt_power(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3,T_synch_min)
 
         # bremsstrahlung emission
         P_brems = compute_brems_power(r,Te,m,mdot,s,alpha,c1)
@@ -647,9 +686,9 @@ def SED(nu,m,mdot,verbose_return=False,verbose=True,s=0.5,alpha=0.2,beta=10.0,f=
          entire flow is one-temperature with Te = Ti = Te0/r (the t = 0 limit of
          the parameterization), and no electron energy balance is solved.
     T_synch_min: electron temperature below which thermal synchrotron emission is not
-         counted, in K.  Relevant when the flow has a one-temperature zone (req < rmax,
-         or req <= rmin), where Te = Te0/r: following M97 (sec. 4.1) the outer synchrotron
-         anchor is placed no further out than where Te falls to this value, and a flow
+         counted, in K.  Following M97 (sec. 4.1), the outer synchrotron anchor -- in the
+         one-temperature zone and in the two-temperature zone alike -- is placed no
+         further out than where the electron temperature falls to this value, and a zone
          that is everywhere cooler than this emits no synchrotron (or Compton) at all.
     numin, numax: limits of the internal frequency grid, in Hz; requested frequencies
                   outside this range are returned as zero
@@ -732,7 +771,7 @@ def SED(nu,m,mdot,verbose_return=False,verbose=True,s=0.5,alpha=0.2,beta=10.0,f=
 
     if not solve_f:
 
-        Te0, t, c1, c3, on_boundary = solve_temperature(nu_arr,r,m,mdot,f,s,alpha,beta,lambda_w,delta,rmin,r_bal,req,N_Te,logTe0_lo,logTe0_hi,tol_logTe0)
+        Te0, t, c1, c3, on_boundary = solve_temperature(nu_arr,r,m,mdot,f,s,alpha,beta,lambda_w,delta,rmin,r_bal,req,T_synch_min,N_Te,logTe0_lo,logTe0_hi,tol_logTe0)
 
     else:
 
@@ -743,7 +782,7 @@ def SED(nu,m,mdot,verbose_return=False,verbose=True,s=0.5,alpha=0.2,beta=10.0,f=
         f_converged = False
         for _ in range(N_f):
 
-            Te0, t, c1, c3, on_boundary = solve_temperature(nu_arr,r,m,mdot,f,s,alpha,beta,lambda_w,delta,rmin,r_bal,req,N_Te,logTe0_lo,logTe0_hi,tol_logTe0)
+            Te0, t, c1, c3, on_boundary = solve_temperature(nu_arr,r,m,mdot,f,s,alpha,beta,lambda_w,delta,rmin,r_bal,req,T_synch_min,N_Te,logTe0_lo,logTe0_hi,tol_logTe0)
             K = (6.66e12)*beta*c3/(2.08*(1.0+beta))
             Qplus, Qminus = compute_powers(nu_arr,r_full,Te_profile(r_full,Te0,t,req,K),Te0,t,f,rmin,rmax,req,m,mdot,s,alpha,beta,c1,c3,T_synch_min)
             f_target = 1.0 - (Qminus/Qplus)
