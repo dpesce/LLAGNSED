@@ -344,11 +344,30 @@ def assemble_synch_spectrum(nu_arr,Te0,t,rmin,rmax,req,m,mdot,s,alpha,beta,c1,c3
     not meaningful.
 
     Returns (Lnu_synch, nu_p, L_p, nu_bal, L_bal, nu_min, L_min); the last two equal the
-    middle two when there is no outer zone.
+    middle two when there is no outer zone.  If req <= rmin the entire flow is
+    one-temperature and the spectrum is a single zone anchored at rmin and at r_syn =
+    min(rmax, Te0/T_synch_min); if even Te(rmin) = Te0/rmin falls below T_synch_min, the
+    synchrotron emission is omitted entirely (zeros, with nu_p = L_p = 0).
     """
 
     K = (6.66e12)*beta*c3/(2.08*(1.0+beta))
     r_bal = min(req,rmax)
+
+    # if the equalization radius lies at or inside the inner edge, the entire flow is
+    # one-temperature (Te = Te0/r): the spectrum is a single zone running from the inner
+    # edge to the synchrotron validity radius r_syn
+    if req <= rmin:
+        r_syn = min(rmax, K/T_synch_min)
+        if r_syn <= rmin:
+            warnings.warn('the entire flow is cooler than T_synch_min = '+str(T_synch_min)
+                          +' K; thermal synchrotron emission (and its Comptonization) is omitted',
+                          RuntimeWarning, stacklevel=2)
+            zeros = np.zeros_like(nu_arr)
+            return zeros, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        nu_p, L_p = compute_crit_freq(nu_arr,K/rmin,rmin,m,mdot,s,alpha,beta,c1,c3)
+        nu_min, L_min = compute_crit_freq(nu_arr,K/r_syn,r_syn,m,mdot,s,alpha,beta,c1,c3)
+        Lnu = compute_synch_spectrum(nu_arr,K,0.0,rmin,r_syn,m,mdot,s,alpha,beta,c1,c3,nu_p,L_p,nu_min,L_min)
+        return Lnu, nu_p, L_p, nu_p, L_p, nu_min, L_min
 
     nu_p, L_p = compute_peak_freq(nu_arr,Te0,t,rmin,r_bal,m,mdot,s,alpha,beta,c1,c3)
     nu_bal, L_bal = compute_min_freq(nu_arr,Te0,t,rmin,r_bal,m,mdot,s,alpha,beta,c1,c3)
@@ -383,8 +402,15 @@ def compute_powers(nu_arr,r,Te,Te0,t,f,rmin,rmax,req,m,mdot,s,alpha,beta,c1,c3,T
     Lnu_synch = assemble_synch_spectrum(nu_arr,Te0,t,rmin,rmax,req,m,mdot,s,alpha,beta,c1,c3,T_synch_min)[0]
     P_synch = np.sum(0.5*(Lnu_synch[1:] + Lnu_synch[0:-1])*(nu_arr[1:] - nu_arr[0:-1]))
 
-    Qminus = (P_synch
-              + compute_compt_power(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
+    # in a fully one-temperature flow that is everywhere cooler than T_synch_min, there
+    # are no synchrotron seed photons, so the Compton contribution is omitted along with
+    # the synchrotron (assemble_synch_spectrum returns zeros there)
+    if (req <= rmin) and ((Te0/(rmin**(1.0-t))) < T_synch_min):
+        P_compt = 0.0
+    else:
+        P_compt = compute_compt_power(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3)
+
+    Qminus = (P_synch + P_compt
               + compute_brems_power(r,Te,m,mdot,s,alpha,c1))
 
     return Qplus, Qminus
@@ -407,6 +433,11 @@ def solve_temperature(nu_arr,r,m,mdot,f,s,alpha,beta,delta,rmin,rmax,req,N_Te,lo
     The balance is a statement about the two-temperature zone, so all integrals run over
     the grid r, which must span [rmin, min(req, rmax)]; rmax here is the outer edge of that
     zone (i.e. the caller passes min(req, rmax)), while req sets the temperature index t.
+
+    If req <= rmin there is no two-temperature zone at all: the entire flow is
+    one-temperature with Te = Ti = Te0/r, which is the t = 0 limit of the
+    parameterization, and so (Te0, 0) is returned without solving any balance (the grid r
+    is then unused).
     """
 
     # derived quantities
@@ -415,6 +446,12 @@ def solve_temperature(nu_arr,r,m,mdot,f,s,alpha,beta,delta,rmin,rmax,req,N_Te,lo
 
     c1 = ((5.0 + (2.0*epsilon_prime)) / (3.0*(alpha**2.0)))*(np.sqrt(1.0 + ((18.0*(alpha**2.0))/((5.0 + (2.0*epsilon_prime))**2.0))) - 1.0)
     c3 = (2.0*(5.0 + (2.0*epsilon_prime)) / (9.0*(alpha**2.0)))*(np.sqrt(1.0 + ((18.0*(alpha**2.0))/((5.0 + (2.0*epsilon_prime))**2.0))) - 1.0)
+
+    # if the equalization radius lies at or inside the inner edge, the entire flow is
+    # one-temperature with Te = Ti = Te0/r
+    if req <= rmin:
+        Te0 = (6.66e12)*beta*c3/(2.08*(1.0+beta))
+        return Te0, 0.0, c1, c3, False
 
     # determine the electron temperature
     def electron_energy_balance(Te0):
@@ -583,11 +620,15 @@ def SED(nu,m,mdot,verbose_return=False,verbose=True,s=0.5,alpha=0.2,beta=10.0,f=
          temperature zone whose emission (mainly bremsstrahlung, plus the low-frequency
          synchrotron tail) is included in the SED but, being powered by the ions, not in the
          electron energy balance that fixes Te0.  req > rmax is allowed and describes a flow
-         that is truncated before the temperatures equilibrate.
+         that is truncated before the temperatures equilibrate.  req <= rmin is also
+         allowed: the equalization radius then lies at or inside the inner edge, the
+         entire flow is one-temperature with Te = Ti = Te0/r (the t = 0 limit of
+         the parameterization), and no electron energy balance is solved.
     T_synch_min: electron temperature below which thermal synchrotron emission is not
-         counted, in K.  Only relevant when req < rmax: the outer one-temperature zone
-         has Te = K/r, and following M97 (sec. 4.1) the outer synchrotron anchor is placed
-         no further out than where Te falls to this value.
+         counted, in K.  Relevant when the flow has a one-temperature zone (req < rmax,
+         or req <= rmin), where Te = Te0/r: following M97 (sec. 4.1) the outer synchrotron
+         anchor is placed no further out than where Te falls to this value, and a flow
+         that is everywhere cooler than this emits no synchrotron (or Compton) at all.
     numin, numax: limits of the internal frequency grid, in Hz; requested frequencies
                   outside this range are returned as zero
     N_Te: maximum number of bisection iterations for Te0
@@ -614,7 +655,8 @@ def SED(nu,m,mdot,verbose_return=False,verbose=True,s=0.5,alpha=0.2,beta=10.0,f=
         Te0: Normalization of the electron temperature profile, in K.  The profile is
              Te(r) = Te0/r**(1-t), so Te0 is its value extrapolated to r = 1, which lies
              inside rmin; Te0 is hotter than every electron in the flow.  The hottest
-             physical temperature is Te(rmin) = Te0/rmin**(1-t).
+             physical temperature is Te(rmin) = Te0/rmin**(1-t).  In the one-temperature
+             regime (req <= rmin), t = 0 by construction, so Te(r) = Te0/r.
         Lnu_synch, Lnu_compt, Lnu_brems: the individual components, in erg/s/Hz
         f_implied: the advected fraction implied by the computed radiative losses,
                    1 - Q^-/Q^+.  The input f should match this for self-consistency;
@@ -636,8 +678,12 @@ def SED(nu,m,mdot,verbose_return=False,verbose=True,s=0.5,alpha=0.2,beta=10.0,f=
 
     if req is None:
         req = rmax
-    if req <= rmin:
-        raise RuntimeError('req must exceed rmin: the two-temperature zone would be empty.')
+    if rmax <= rmin:
+        raise RuntimeError('rmax must exceed rmin.')
+
+    # if req <= rmin, the equalization radius lies at or inside the inner edge and the
+    # entire flow is one-temperature (Te = Ti = Te0/r); no electron energy balance is solved
+    one_temperature = (req <= rmin)
 
     # outer edge of the two-temperature zone, over which the electron balance is solved
     r_bal = min(req,rmax)
@@ -645,13 +691,18 @@ def SED(nu,m,mdot,verbose_return=False,verbose=True,s=0.5,alpha=0.2,beta=10.0,f=
     ##############################################
     # required arrays
 
-    r = 10.0**np.linspace(np.log10(rmin),np.log10(r_bal),N_r)
-    if req < rmax:
-        # outer one-temperature zone; req is duplicated at the join, which the trapezoid
-        # rule handles as a zero-width interval
-        r_full = np.concatenate([r, 10.0**np.linspace(np.log10(req),np.log10(rmax),N_r)])
-    else:
+    if one_temperature:
+        # no two-temperature zone; a single grid covers the whole (one-temperature) flow
+        r = 10.0**np.linspace(np.log10(rmin),np.log10(rmax),N_r)
         r_full = r
+    else:
+        r = 10.0**np.linspace(np.log10(rmin),np.log10(r_bal),N_r)
+        if req < rmax:
+            # outer one-temperature zone; req is duplicated at the join, which the trapezoid
+            # rule handles as a zero-width interval
+            r_full = np.concatenate([r, 10.0**np.linspace(np.log10(req),np.log10(rmax),N_r)])
+        else:
+            r_full = r
     nu_arr = 10.0**np.linspace(np.log10(numin),np.log10(numax),N_nu)
 
     ##############################################
@@ -697,8 +748,12 @@ def SED(nu,m,mdot,verbose_return=False,verbose=True,s=0.5,alpha=0.2,beta=10.0,f=
 
     # print out the solved-for temperature
     if verbose:
-        print('Electron temperature normalization is '+str(np.round(Te0/(1.0e9),2))+' GK at r = 1; '
-              +'Te(rmin) = '+str(np.round(Te0/((rmin**(1.0-t))*1.0e9),2))+' GK.')
+        if one_temperature:
+            print('req <= rmin: the flow is one-temperature everywhere; '
+                  +'Te(rmin) = Ti(rmin) = '+str(np.round(Te0/(rmin*1.0e9),2))+' GK.')
+        else:
+            print('Electron temperature normalization is '+str(np.round(Te0/(1.0e9),2))+' GK at r = 1; '
+                  +'Te(rmin) = '+str(np.round(Te0/((rmin**(1.0-t))*1.0e9),2))+' GK.')
 
     # check for extreme temperature values
     if on_boundary:
@@ -740,8 +795,12 @@ def SED(nu,m,mdot,verbose_return=False,verbose=True,s=0.5,alpha=0.2,beta=10.0,f=
     synch_interpolator = interpolate.interp1d(np.log10(nu_arr), np.log10(Lnu_synch_full),kind='linear',bounds_error=False,fill_value=-np.inf)
     Lnu_synch = 10.0**synch_interpolator(np.log10(nu))
 
-    # inverse Compton emission
-    Lnu_compt_full = compute_compt_spectrum(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3,nu_p,L_p)
+    # inverse Compton emission (omitted when there are no synchrotron seed photons,
+    # i.e. when assemble_synch_spectrum returned zeros with L_p = 0)
+    if L_p > 0.0:
+        Lnu_compt_full = compute_compt_spectrum(nu_arr,Te0,t,rmin,rmax,m,mdot,s,alpha,beta,c1,c3,nu_p,L_p)
+    else:
+        Lnu_compt_full = np.zeros_like(nu_arr)
     compt_interpolator = interpolate.interp1d(np.log10(nu_arr), np.log10(Lnu_compt_full),kind='linear',bounds_error=False,fill_value=-np.inf)
     Lnu_compt = 10.0**compt_interpolator(np.log10(nu))
 
