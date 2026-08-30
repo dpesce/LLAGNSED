@@ -394,10 +394,11 @@ def compute_powers(nu_arr,r,Te,Te0,t,f,rmin,rmax,req,m,mdot,s,alpha,beta,c1,c3,T
     piecewise temperature profile on it.
     """
 
+    # BB99-consistent generalization of NY95 eq. 2.5
     if s == 1:
-        Qplus = (9.430e38)*(f**(-1.0))*((1.0+beta)**(-1.0))*c3*m*mdot*np.log(rmax/rmin)
+        Qplus = (9.430e38)*(f**(-1.0))*(((1.0+beta)**(-1.0)) + ((2.0*s)/3.0))*c3*m*mdot*np.log(rmax/rmin)
     else:
-        Qplus = (9.430e38)*(f**(-1.0))*((1.0+beta)**(-1.0))*c3*m*mdot*((1.0-s)**(-1.0))*((rmin**(-1.0+s)) - (rmax**(-1.0+s)))
+        Qplus = (9.430e38)*(f**(-1.0))*(((1.0+beta)**(-1.0)) + ((2.0*s)/3.0))*c3*m*mdot*((1.0-s)**(-1.0))*((rmin**(-1.0+s)) - (rmax**(-1.0+s)))
 
     Lnu_synch = assemble_synch_spectrum(nu_arr,Te0,t,rmin,rmax,req,m,mdot,s,alpha,beta,c1,c3,T_synch_min)[0]
     P_synch = np.sum(0.5*(Lnu_synch[1:] + Lnu_synch[0:-1])*(nu_arr[1:] - nu_arr[0:-1]))
@@ -418,14 +419,18 @@ def compute_powers(nu_arr,r,Te,Te0,t,f,rmin,rmax,req,m,mdot,s,alpha,beta,c1,c3,T
 ##############################################
 # electron temperature solver
 
-def solve_temperature(nu_arr,r,m,mdot,f,s,alpha,beta,delta,rmin,rmax,req,N_Te,logTe0_lo,logTe0_hi,tol_logTe0):
+def solve_temperature(nu_arr,r,m,mdot,f,s,alpha,beta,lambda_w,delta,rmin,rmax,req,N_Te,logTe0_lo,logTe0_hi,tol_logTe0):
     """
     Solve the electron energy balance (P21 eq. A1) for the electron temperature
     normalization Te0, at a fixed advected fraction f.
 
-    f enters through epsilon' = (1/f)(5/3-gamma)/(gamma-1), which sets the structure
-    constants c1 and c3 and hence the whole self-similar solution, so those are computed
-    here rather than by the caller.
+    The structure constants c1 and c3 are computed here rather than by the caller.  They
+    follow the BB99-consistent generalization of the NY95 self-similar solution to a flow
+    with Mdot ~ r**s and a wind: the entropy-balance coefficient is X = epsilon' + 2s/(3f)
+    with epsilon' = (1/f)(5/3-gamma)/(gamma-1), the ratio k = c1/c3 is set by the
+    angular-momentum balance with the wind removing lambda_w times the local specific
+    angular momentum, and the radial-momentum coefficient becomes (5/2 - s).  Setting
+    s = 0 recovers the NY95 solution exactly.
 
     Returns Te0 (K), t (the Te power-law index), c1, c3, and a flag indicating whether the
     solution landed on the boundary of the search interval.
@@ -440,12 +445,23 @@ def solve_temperature(nu_arr,r,m,mdot,f,s,alpha,beta,delta,rmin,rmax,req,N_Te,lo
     is then unused).
     """
 
-    # derived quantities
+    # derived quantities, including BB99-consistent self-similar structure
     gamma = (8.0 + (5.0*beta)) / (6.0 + (3.0*beta))
     epsilon_prime = (1.0/f)*(((5.0/3.0) - gamma) / (gamma - 1.0))
+    X = epsilon_prime + ((2.0*s)/(3.0*f))
 
-    c1 = ((5.0 + (2.0*epsilon_prime)) / (3.0*(alpha**2.0)))*(np.sqrt(1.0 + ((18.0*(alpha**2.0))/((5.0 + (2.0*epsilon_prime))**2.0))) - 1.0)
-    c3 = (2.0*(5.0 + (2.0*epsilon_prime)) / (9.0*(alpha**2.0)))*(np.sqrt(1.0 + ((18.0*(alpha**2.0))/((5.0 + (2.0*epsilon_prime))**2.0))) - 1.0)
+    # the viscous torque diverges as lambda_w approaches (2s+1)/(2s) from below, and the
+    # required torque would be negative beyond it
+    if lambda_w < 0.0:
+        raise RuntimeError('lambda_w must be non-negative.')
+    if (s > 0.0) and (lambda_w >= (((2.0*s) + 1.0)/(2.0*s))):
+        raise RuntimeError('lambda_w must be smaller than (2s+1)/(2s) = '+str(((2.0*s) + 1.0)/(2.0*s))+' for s = '+str(s)+'.')
+
+    k = (3.0/2.0)*(((2.0*s) + 1.0)/(((2.0*s) + 1.0) - (2.0*s*lambda_w)))
+    D = ((5.0/2.0) - s) + ((2.0/3.0)*k*X)
+
+    c3 = 2.0/(D + np.sqrt((D**2.0) + (2.0*(alpha**2.0)*(k**2.0))))
+    c1 = k*c3
 
     # if the equalization radius lies at or inside the inner edge, the entire flow is
     # one-temperature with Te = Ti = Te0/r
@@ -475,9 +491,9 @@ def solve_temperature(nu_arr,r,m,mdot,f,s,alpha,beta,delta,rmin,rmax,req,N_Te,lo
 
         # viscous heating rate
         if s == 1:
-            Qplus = (9.430e38)*(f**(-1.0))*((1.0+beta)**(-1.0))*c3*m*mdot*np.log(rmax/rmin)
+            Qplus = (9.430e38)*(f**(-1.0))*(((1.0+beta)**(-1.0)) + ((2.0*s)/3.0))*c3*m*mdot*np.log(rmax/rmin)
         else:
-            Qplus = (9.430e38)*(f**(-1.0))*((1.0+beta)**(-1.0))*c3*m*mdot*((1.0-s)**(-1.0))*((rmin**(-1.0+s)) - (rmax**(-1.0+s)))
+            Qplus = (9.430e38)*(f**(-1.0))*(((1.0+beta)**(-1.0)) + ((2.0*s)/3.0))*c3*m*mdot*((1.0-s)**(-1.0))*((rmin**(-1.0+s)) - (rmax**(-1.0+s)))
 
         # electron-ion heating rate
         qie = qie_func(Te,Ti,ne)
@@ -582,7 +598,7 @@ def solve_temperature(nu_arr,r,m,mdot,f,s,alpha,beta,delta,rmin,rmax,req,N_Te,lo
 ##############################################
 # SED main function
 
-def SED(nu,m,mdot,verbose_return=False,verbose=True,s=0.5,alpha=0.2,beta=10.0,f=1.0,delta=0.3,
+def SED(nu,m,mdot,verbose_return=False,verbose=True,s=0.5,alpha=0.2,beta=10.0,f=1.0,delta=0.3,lambda_w=1.0,
     rmin=3.0,rmax=1.0e5,req=1.0e3,T_synch_min=1.0e8,numin=1.0e2,numax=1.0e22,
     N_Te=100,N_r=30,N_nu=20000,logTe0_lo=8.0,logTe0_hi=12.0,tol_logTe0=1.0e-6,
     solve_f=False,N_f=100,tol_f=1.0e-4,damp_f=1.0,f_min=1.0e-3):
@@ -611,6 +627,12 @@ def SED(nu,m,mdot,verbose_return=False,verbose=True,s=0.5,alpha=0.2,beta=10.0,f=
        f = 1 - Q^-/Q^+, so f = 1 corresponds to no radiative losses at all; it is a good
        approximation only at low accretion rates (see solve_f).
     delta: fraction of the viscous heating deposited directly into the electrons
+    lambda_w: specific angular momentum carried away by the wind, in units of the local
+         disk value Omega*R**2 (BB99).  lambda_w = 1 is a gasdynamical wind that carries
+         off its own angular momentum and exerts no reaction torque on the disk (BB99
+         case iv); lambda_w > 1 represents magnetized winds, with the disk Bernoulli
+         parameter turning negative for lambda_w > (2s+1)/(3s).  Must satisfy
+         0 <= lambda_w < (2s+1)/(2s); irrelevant when s = 0.
     rmin, rmax: inner and outer radii of the flow, in Schwarzschild radii
     req: radius at which the ion and electron temperatures become equal, in Schwarzschild
          radii.  Inside req the flow is two-temperature with Te = Te0 r**(-(1-t)); at and
@@ -710,7 +732,7 @@ def SED(nu,m,mdot,verbose_return=False,verbose=True,s=0.5,alpha=0.2,beta=10.0,f=
 
     if not solve_f:
 
-        Te0, t, c1, c3, on_boundary = solve_temperature(nu_arr,r,m,mdot,f,s,alpha,beta,delta,rmin,r_bal,req,N_Te,logTe0_lo,logTe0_hi,tol_logTe0)
+        Te0, t, c1, c3, on_boundary = solve_temperature(nu_arr,r,m,mdot,f,s,alpha,beta,lambda_w,delta,rmin,r_bal,req,N_Te,logTe0_lo,logTe0_hi,tol_logTe0)
 
     else:
 
@@ -721,7 +743,7 @@ def SED(nu,m,mdot,verbose_return=False,verbose=True,s=0.5,alpha=0.2,beta=10.0,f=
         f_converged = False
         for _ in range(N_f):
 
-            Te0, t, c1, c3, on_boundary = solve_temperature(nu_arr,r,m,mdot,f,s,alpha,beta,delta,rmin,r_bal,req,N_Te,logTe0_lo,logTe0_hi,tol_logTe0)
+            Te0, t, c1, c3, on_boundary = solve_temperature(nu_arr,r,m,mdot,f,s,alpha,beta,lambda_w,delta,rmin,r_bal,req,N_Te,logTe0_lo,logTe0_hi,tol_logTe0)
             K = (6.66e12)*beta*c3/(2.08*(1.0+beta))
             Qplus, Qminus = compute_powers(nu_arr,r_full,Te_profile(r_full,Te0,t,req,K),Te0,t,f,rmin,rmax,req,m,mdot,s,alpha,beta,c1,c3,T_synch_min)
             f_target = 1.0 - (Qminus/Qplus)
