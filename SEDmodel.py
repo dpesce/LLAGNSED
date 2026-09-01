@@ -640,7 +640,7 @@ def solve_temperature(nu_arr,r,m,mdot,f,s,alpha,beta,lambda_w,delta,rmin,rmax,re
 def SED(nu,m,mdot,verbose_return=False,verbose=True,s=0.5,alpha=0.2,beta=10.0,f=1.0,delta=0.3,lambda_w=1.0,
     rmin=3.0,rmax=1.0e5,req=1.0e3,T_synch_min=1.0e8,numin=1.0e2,numax=1.0e22,
     N_Te=100,N_r=30,N_nu=20000,logTe0_lo=8.0,logTe0_hi=12.0,tol_logTe0=1.0e-6,
-    solve_f=False,N_f=100,tol_f=1.0e-4,damp_f=1.0,f_min=1.0e-3):
+    solve_f=True,N_f=100,tol_f=1.0e-4,damp_f=1.0,f_min=1.0e-3):
     """
     Compute the SED of an advection-dominated accretion flow (ADAF), following Appendix A
     of Pesce et al. (2021), which follows Mahadevan (1997, M97) and Narayan & Yi (1995, NY95).
